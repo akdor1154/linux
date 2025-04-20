@@ -1,4 +1,13 @@
-Branch setup
+## Fixed drivers for G502 X
+
+This repo contains
+ - a branch of the linux kernel, with patches to get the G502 X + Lightspeed receiver working with the `hid-logitech-dj` and `hid-logitech-hidpp` modules.
+ - some machinery to also build said patched modules with DKMS, and a Debian package of this.
+
+## Usage
+ - Download and install `new-hidpp-dkms_*.deb` from the latest Github release.
+
+## Branch setup
  - git commit --allow-empty -m 'init'
  - git checkout -B main
 
