@@ -8,6 +8,8 @@ This repo contains
  - Download and install `new-hidpp-dkms_*.deb` from the latest Github release.
 
 ## Branch setup
+
+```
  - git commit --allow-empty -m 'init'
  - git checkout -B main
 
@@ -37,7 +39,7 @@ This repo contains
  # now apply patch-upstream in our dkms module
  - git checkout min
  - git merge -X subtree=upstream/ patch-upstream
-
+```
 
 ## Versioning
 
