@@ -1,0 +1,32 @@
+#!/usr/bin/make -f
+
+name = new-hidpp
+
+version := $(shell git describe --long).$(shell date -u -d "$$(git show -s --format=%ci HEAD)" +%Y%m%d)
+
+%:
+	dh $@
+
+override_dh_install:
+	dh_installdirs -p$(name)-dkms \
+		usr/src/$(name)-$(version) \
+		usr/src/$(name)-$(version)\usbhid
+	dh_install -p$(name)-dkms \
+		module/Makefile \
+		module/Kbuild \
+		module/hid-ids.h \
+		module/hid-logitech-dj.c \
+		module/hid-logitech-hidpp.c \
+		usr/src/$(name)-$(version)
+	dh_install -p$(name)-dkms \
+		module/usbhid/usbhid.h \
+		usr/src/$(name)-$(version)/usbhid
+
+override_dh_dkms:
+	dh_dkms -V $(version)
+
+override_dh_auto_configure:
+override_dh_auto_build:
+override_dh_auto_test:
+override_dh_auto_install:
+override_dh_auto_clean:

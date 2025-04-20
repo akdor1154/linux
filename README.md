@@ -28,3 +28,8 @@ Branch setup
  # now apply patch-upstream in our dkms module
  - git checkout min
  - git merge -X subtree=upstream/ patch-upstream
+
+
+## Versioning
+
+Deb package versions are maintained by `git tag -a deb-v1.0.0` -m 'v1.0.0'

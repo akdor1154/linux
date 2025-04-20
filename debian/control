@@ -1,0 +1,10 @@
+Source: new-hidpp-dkms
+Section: misc
+Priority: optional
+Maintainer: Jarrad Whitaker <akdor1154@gmail.com>
+Build-Depends: debhelper-compat (= 13), dh-sequence-dkms
+
+Package: new-hidpp-dkms
+Architecture: all
+Depends: ${misc:Depends}
+Description: hid-logitech-dj and hid-logitech-hidpp installed with DKMS with patches for G502 X
