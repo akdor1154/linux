@@ -1,4 +1,4 @@
-new-hidpp-dkms (1.0.0) UNRELEASED; urgency=medium
+new-hidpp-dkms (1.0.0) stable; urgency=medium
 
   * Initial release.
 
