@@ -11,8 +11,6 @@
 #include "cxlpci.h"
 #include "cxl.h"
 
-#define CXL_RCRB_SIZE	SZ_8K
-
 struct cxl_cxims_data {
 	int nr_maps;
 	u64 xormaps[] __counted_by(nr_maps);
@@ -479,7 +477,11 @@ static int cxl_get_chbs_iter(union acpi_subtable_headers *header, void *arg,
 	chbs = (struct acpi_cedt_chbs *) header;
 
 	if (chbs->cxl_version == ACPI_CEDT_CHBS_VERSION_CXL11 &&
-	    chbs->length != CXL_RCRB_SIZE)
+	    chbs->length != ACPI_CEDT_CHBS_LENGTH_CXL11)
+		return 0;
+
+	if (chbs->cxl_version == ACPI_CEDT_CHBS_VERSION_CXL20 &&
+	    chbs->length != ACPI_CEDT_CHBS_LENGTH_CXL20)
 		return 0;
 
 	if (!chbs->base)
@@ -934,5 +936,5 @@ MODULE_SOFTDEP("pre: cxl_port");
 module_exit(cxl_acpi_exit);
 MODULE_DESCRIPTION("CXL ACPI: Platform Support");
 MODULE_LICENSE("GPL v2");
-MODULE_IMPORT_NS(CXL);
-MODULE_IMPORT_NS(ACPI);
+MODULE_IMPORT_NS("CXL");
+MODULE_IMPORT_NS("ACPI");

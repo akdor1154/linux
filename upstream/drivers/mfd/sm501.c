@@ -915,12 +915,13 @@ static void sm501_gpio_ensure_gpio(struct sm501_gpio_chip *smchip,
 	}
 }
 
-static void sm501_gpio_set(struct gpio_chip *chip, unsigned offset, int value)
+static int sm501_gpio_set(struct gpio_chip *chip, unsigned int offset,
+			  int value)
 
 {
 	struct sm501_gpio_chip *smchip = gpiochip_get_data(chip);
 	struct sm501_gpio *smgpio = smchip->ourgpio;
-	unsigned long bit = 1 << offset;
+	unsigned long bit = BIT(offset);
 	void __iomem *regs = smchip->regbase;
 	unsigned long save;
 	unsigned long val;
@@ -939,6 +940,8 @@ static void sm501_gpio_set(struct gpio_chip *chip, unsigned offset, int value)
 	sm501_gpio_ensure_gpio(smchip, bit);
 
 	spin_unlock_irqrestore(&smgpio->lock, save);
+
+	return 0;
 }
 
 static int sm501_gpio_input(struct gpio_chip *chip, unsigned offset)
@@ -946,7 +949,7 @@ static int sm501_gpio_input(struct gpio_chip *chip, unsigned offset)
 	struct sm501_gpio_chip *smchip = gpiochip_get_data(chip);
 	struct sm501_gpio *smgpio = smchip->ourgpio;
 	void __iomem *regs = smchip->regbase;
-	unsigned long bit = 1 << offset;
+	unsigned long bit = BIT(offset);
 	unsigned long save;
 	unsigned long ddr;
 
@@ -971,7 +974,7 @@ static int sm501_gpio_output(struct gpio_chip *chip,
 {
 	struct sm501_gpio_chip *smchip = gpiochip_get_data(chip);
 	struct sm501_gpio *smgpio = smchip->ourgpio;
-	unsigned long bit = 1 << offset;
+	unsigned long bit = BIT(offset);
 	void __iomem *regs = smchip->regbase;
 	unsigned long save;
 	unsigned long val;
@@ -1005,7 +1008,7 @@ static const struct gpio_chip gpio_chip_template = {
 	.ngpio			= 32,
 	.direction_input	= sm501_gpio_input,
 	.direction_output	= sm501_gpio_output,
-	.set			= sm501_gpio_set,
+	.set_rv			= sm501_gpio_set,
 	.get			= sm501_gpio_get,
 };
 
@@ -1705,7 +1708,7 @@ static struct platform_driver sm501_plat_driver = {
 		.of_match_table = of_sm501_match_tbl,
 	},
 	.probe		= sm501_plat_probe,
-	.remove_new	= sm501_plat_remove,
+	.remove		= sm501_plat_remove,
 	.suspend	= pm_sleep_ptr(sm501_plat_suspend),
 	.resume		= pm_sleep_ptr(sm501_plat_resume),
 };

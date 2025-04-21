@@ -13,7 +13,10 @@
 
 #include "../libwx/wx_type.h"
 #include "../libwx/wx_lib.h"
+#include "../libwx/wx_ptp.h"
 #include "../libwx/wx_hw.h"
+#include "../libwx/wx_mbx.h"
+#include "../libwx/wx_sriov.h"
 #include "txgbe_type.h"
 #include "txgbe_hw.h"
 #include "txgbe_phy.h"
@@ -34,6 +37,12 @@ char txgbe_driver_name[] = "txgbe";
 static const struct pci_device_id txgbe_pci_tbl[] = {
 	{ PCI_VDEVICE(WANGXUN, TXGBE_DEV_ID_SP1000), 0},
 	{ PCI_VDEVICE(WANGXUN, TXGBE_DEV_ID_WX1820), 0},
+	{ PCI_VDEVICE(WANGXUN, TXGBE_DEV_ID_AML5010), 0},
+	{ PCI_VDEVICE(WANGXUN, TXGBE_DEV_ID_AML5110), 0},
+	{ PCI_VDEVICE(WANGXUN, TXGBE_DEV_ID_AML5025), 0},
+	{ PCI_VDEVICE(WANGXUN, TXGBE_DEV_ID_AML5125), 0},
+	{ PCI_VDEVICE(WANGXUN, TXGBE_DEV_ID_AML5040), 0},
+	{ PCI_VDEVICE(WANGXUN, TXGBE_DEV_ID_AML5140), 0},
 	/* required last entry */
 	{ .device = 0 }
 };
@@ -82,7 +91,6 @@ static void txgbe_up_complete(struct wx *wx)
 {
 	struct net_device *netdev = wx->netdev;
 
-	txgbe_reinit_gpio_intr(wx);
 	wx_control_hw(wx, true);
 	wx_configure_vectors(wx);
 
@@ -90,7 +98,18 @@ static void txgbe_up_complete(struct wx *wx)
 	smp_mb__before_atomic();
 	wx_napi_enable_all(wx);
 
-	phylink_start(wx->phylink);
+	if (wx->mac.type == wx_mac_aml) {
+		u32 reg;
+
+		reg = rd32(wx, TXGBE_AML_MAC_TX_CFG);
+		reg &= ~TXGBE_AML_MAC_TX_CFG_SPEED_MASK;
+		reg |= TXGBE_AML_MAC_TX_CFG_SPEED_25G;
+		wr32(wx, WX_MAC_TX_CFG, reg);
+		txgbe_enable_sec_tx_path(wx);
+		netif_carrier_on(wx->netdev);
+	} else {
+		phylink_start(wx->phylink);
+	}
 
 	/* clear any pending interrupts, may auto mask */
 	rd32(wx, WX_PX_IC(0));
@@ -100,6 +119,12 @@ static void txgbe_up_complete(struct wx *wx)
 
 	/* enable transmits */
 	netif_tx_start_all_queues(netdev);
+
+	/* Set PF Reset Done bit so PF/VF Mail Ops can work */
+	wr32m(wx, WX_CFG_PORT_CTL, WX_CFG_PORT_CTL_PFRSTD,
+	      WX_CFG_PORT_CTL_PFRSTD);
+	/* update setting rx tx for all active vfs */
+	wx_set_all_vfs(wx);
 }
 
 static void txgbe_reset(struct wx *wx)
@@ -117,6 +142,9 @@ static void txgbe_reset(struct wx *wx)
 	memcpy(old_addr, &wx->mac_table[0].addr, netdev->addr_len);
 	wx_flush_sw_mac_table(wx);
 	wx_mac_set_default_filter(wx, old_addr);
+
+	if (test_bit(WX_STATE_PTP_RUNNING, wx->state))
+		wx_ptp_reset(wx);
 }
 
 static void txgbe_disable_device(struct wx *wx)
@@ -145,6 +173,16 @@ static void txgbe_disable_device(struct wx *wx)
 		wx_err(wx, "%s: invalid bus lan id %d\n",
 		       __func__, wx->bus.func);
 
+	if (wx->num_vfs) {
+		/* Clear EITR Select mapping */
+		wr32(wx, WX_PX_ITRSEL, 0);
+		/* Mark all the VFs as inactive */
+		for (i = 0; i < wx->num_vfs; i++)
+			wx->vfinfo[i].clear_to_send = 0;
+		/* update setting rx tx for all active vfs */
+		wx_set_all_vfs(wx);
+	}
+
 	if (!(((wx->subsystem_device_id & WX_NCSI_MASK) == WX_NCSI_SUP) ||
 	      ((wx->subsystem_device_id & WX_WOL_MASK) == WX_WOL_SUP))) {
 		/* disable mac transmiter */
@@ -168,7 +206,10 @@ void txgbe_down(struct wx *wx)
 {
 	txgbe_disable_device(wx);
 	txgbe_reset(wx);
-	phylink_stop(wx->phylink);
+	if (wx->mac.type == wx_mac_aml)
+		netif_carrier_off(wx->netdev);
+	else
+		phylink_stop(wx->phylink);
 
 	wx_clean_all_tx_rings(wx);
 	wx_clean_all_rx_rings(wx);
@@ -177,6 +218,7 @@ void txgbe_down(struct wx *wx)
 void txgbe_up(struct wx *wx)
 {
 	wx_configure(wx);
+	wx_ptp_init(wx);
 	txgbe_up_complete(wx);
 }
 
@@ -192,6 +234,14 @@ static void txgbe_init_type_code(struct wx *wx)
 	case TXGBE_DEV_ID_SP1000:
 	case TXGBE_DEV_ID_WX1820:
 		wx->mac.type = wx_mac_sp;
+		break;
+	case TXGBE_DEV_ID_AML5010:
+	case TXGBE_DEV_ID_AML5110:
+	case TXGBE_DEV_ID_AML5025:
+	case TXGBE_DEV_ID_AML5125:
+	case TXGBE_DEV_ID_AML5040:
+	case TXGBE_DEV_ID_AML5140:
+		wx->mac.type = wx_mac_aml;
 		break;
 	default:
 		wx->mac.type = wx_mac_unknown;
@@ -266,6 +316,8 @@ static int txgbe_sw_init(struct wx *wx)
 	wx->atr = txgbe_atr;
 	wx->configure_fdir = txgbe_configure_fdir;
 
+	set_bit(WX_FLAG_RSC_CAPABLE, wx->flags);
+
 	/* enable itr by default in dynamic mode */
 	wx->rx_itr_setting = 1;
 	wx->tx_itr_setting = 1;
@@ -273,12 +325,26 @@ static int txgbe_sw_init(struct wx *wx)
 	/* set default ring sizes */
 	wx->tx_ring_count = TXGBE_DEFAULT_TXD;
 	wx->rx_ring_count = TXGBE_DEFAULT_RXD;
+	wx->mbx.size = WX_VXMAILBOX_SIZE;
 
 	/* set default work limits */
 	wx->tx_work_limit = TXGBE_DEFAULT_TX_WORK;
 	wx->rx_work_limit = TXGBE_DEFAULT_RX_WORK;
 
+	wx->setup_tc = txgbe_setup_tc;
 	wx->do_reset = txgbe_do_reset;
+	set_bit(0, &wx->fwd_bitmask);
+
+	switch (wx->mac.type) {
+	case wx_mac_sp:
+		break;
+	case wx_mac_aml:
+		set_bit(WX_FLAG_SWFW_RING, wx->flags);
+		wx->swfw_index = 0;
+		break;
+	default:
+		break;
+	}
 
 	return 0;
 }
@@ -322,6 +388,8 @@ static int txgbe_open(struct net_device *netdev)
 	if (err)
 		goto err_free_irq;
 
+	wx_ptp_init(wx);
+
 	txgbe_up_complete(wx);
 
 	return 0;
@@ -345,6 +413,7 @@ err_reset:
  */
 static void txgbe_close_suspend(struct wx *wx)
 {
+	wx_ptp_suspend(wx);
 	txgbe_disable_device(wx);
 	wx_free_resources(wx);
 }
@@ -364,6 +433,7 @@ static int txgbe_close(struct net_device *netdev)
 {
 	struct wx *wx = netdev_priv(netdev);
 
+	wx_ptp_stop(wx);
 	txgbe_down(wx);
 	wx_free_irq(wx);
 	wx_free_resources(wx);
@@ -480,6 +550,8 @@ static const struct net_device_ops txgbe_netdev_ops = {
 	.ndo_get_stats64        = wx_get_stats64,
 	.ndo_vlan_rx_add_vid    = wx_vlan_rx_add_vid,
 	.ndo_vlan_rx_kill_vid   = wx_vlan_rx_kill_vid,
+	.ndo_hwtstamp_set       = wx_hwtstamp_set,
+	.ndo_hwtstamp_get       = wx_hwtstamp_get,
 };
 
 /**
@@ -553,6 +625,10 @@ static int txgbe_probe(struct pci_dev *pdev,
 		goto err_pci_release_regions;
 	}
 
+	/* The sapphire supports up to 63 VFs per pf, but physical
+	 * function also need one pool for basic networking.
+	 */
+	pci_sriov_set_totalvfs(pdev, TXGBE_MAX_VFS_DRV_LIMIT);
 	wx->driver_name = txgbe_driver_name;
 	txgbe_set_ethtool_ops(netdev);
 	netdev->netdev_ops = &txgbe_netdev_ops;
@@ -743,6 +819,7 @@ static void txgbe_remove(struct pci_dev *pdev)
 	struct net_device *netdev;
 
 	netdev = wx->netdev;
+	wx_disable_sriov(wx);
 	unregister_netdev(netdev);
 
 	txgbe_remove_phy(txgbe);
@@ -765,11 +842,12 @@ static struct pci_driver txgbe_driver = {
 	.probe    = txgbe_probe,
 	.remove   = txgbe_remove,
 	.shutdown = txgbe_shutdown,
+	.sriov_configure = wx_pci_sriov_configure,
 };
 
 module_pci_driver(txgbe_driver);
 
 MODULE_DEVICE_TABLE(pci, txgbe_pci_tbl);
 MODULE_AUTHOR("Beijing WangXun Technology Co., Ltd, <software@trustnetic.com>");
-MODULE_DESCRIPTION("WangXun(R) 10 Gigabit PCI Express Network Driver");
+MODULE_DESCRIPTION("WangXun(R) 10/25/40 Gigabit PCI Express Network Driver");
 MODULE_LICENSE("GPL");

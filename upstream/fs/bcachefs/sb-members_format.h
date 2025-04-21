@@ -79,6 +79,7 @@ struct bch_member {
 
 #define BCH_MEMBER_V1_BYTES	56
 
+LE16_BITMASK(BCH_MEMBER_BUCKET_SIZE,	struct bch_member, bucket_size,  0, 16)
 LE64_BITMASK(BCH_MEMBER_STATE,		struct bch_member, flags,  0,  4)
 /* 4-14 unused, was TIER, HAS_(META)DATA, REPLACEMENT */
 LE64_BITMASK(BCH_MEMBER_DISCARD,	struct bch_member, flags, 14, 15)
@@ -87,6 +88,8 @@ LE64_BITMASK(BCH_MEMBER_GROUP,		struct bch_member, flags, 20, 28)
 LE64_BITMASK(BCH_MEMBER_DURABILITY,	struct bch_member, flags, 28, 30)
 LE64_BITMASK(BCH_MEMBER_FREESPACE_INITIALIZED,
 					struct bch_member, flags, 30, 31)
+LE64_BITMASK(BCH_MEMBER_RESIZE_ON_MOUNT,
+					struct bch_member, flags, 31, 32)
 
 #if 0
 LE64_BITMASK(BCH_MEMBER_NR_READ_ERRORS,	struct bch_member, flags[1], 0,  20);

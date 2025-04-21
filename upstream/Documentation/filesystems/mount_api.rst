@@ -671,7 +671,6 @@ The members are as follows:
 	fsparam_bool()		fs_param_is_bool
 	fsparam_u32()		fs_param_is_u32
 	fsparam_u32oct()	fs_param_is_u32_octal
-	fsparam_u32hex()	fs_param_is_u32_hex
 	fsparam_s32()		fs_param_is_s32
 	fsparam_u64()		fs_param_is_u64
 	fsparam_enum()		fs_param_is_enum
@@ -770,7 +769,8 @@ process the parameters it is given.
 
    * ::
 
-       bool fs_validate_description(const struct fs_parameter_description *desc);
+       bool fs_validate_description(const char *name,
+                                    const struct fs_parameter_description *desc);
 
      This performs some validation checks on a parameter description.  It
      returns true if the description is good and false if it is not.  It will

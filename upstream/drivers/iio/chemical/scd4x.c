@@ -358,15 +358,14 @@ static int scd4x_read_raw(struct iio_dev *indio_dev,
 			return IIO_VAL_INT;
 		}
 
-		ret = iio_device_claim_direct_mode(indio_dev);
-		if (ret)
-			return ret;
+		if (!iio_device_claim_direct(indio_dev))
+			return -EBUSY;
 
 		mutex_lock(&state->lock);
 		ret = scd4x_read_channel(state, chan->address);
 		mutex_unlock(&state->lock);
 
-		iio_device_release_direct_mode(indio_dev);
+		iio_device_release_direct(indio_dev);
 		if (ret < 0)
 			return ret;
 
@@ -665,7 +664,7 @@ static irqreturn_t scd4x_trigger_handler(int irq, void *p)
 	struct scd4x_state *state = iio_priv(indio_dev);
 	struct {
 		uint16_t data[3];
-		int64_t ts __aligned(8);
+		aligned_s64 ts;
 	} scan;
 	int ret;
 

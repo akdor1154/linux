@@ -81,7 +81,22 @@
 	  BCH_FSCK_ERR_accounting_mismatch)			\
 	x(inode_has_child_snapshots,				\
 	  BIT_ULL(BCH_RECOVERY_PASS_check_inodes),		\
-	  BCH_FSCK_ERR_inode_has_child_snapshots_wrong)
+	  BCH_FSCK_ERR_inode_has_child_snapshots_wrong)		\
+	x(backpointer_bucket_gen,				\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_extents_to_backpointers),\
+	  BCH_FSCK_ERR_backpointer_to_missing_ptr,		\
+	  BCH_FSCK_ERR_ptr_to_missing_backpointer)		\
+	x(disk_accounting_big_endian,				\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_allocations),		\
+	  BCH_FSCK_ERR_accounting_mismatch,			\
+	  BCH_FSCK_ERR_accounting_key_replicas_nr_devs_0,	\
+	  BCH_FSCK_ERR_accounting_key_junk_at_end)		\
+	x(cached_backpointers,					\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_extents_to_backpointers),\
+	  BCH_FSCK_ERR_ptr_to_missing_backpointer)		\
+	x(stripe_backpointers,					\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_extents_to_backpointers),\
+	  BCH_FSCK_ERR_ptr_to_missing_backpointer)
 
 #define DOWNGRADE_TABLE()					\
 	x(bucket_stripe_sectors,				\
@@ -117,7 +132,19 @@
 	  BCH_FSCK_ERR_bkey_version_in_future)			\
 	x(rebalance_work_acct_fix,				\
 	  BIT_ULL(BCH_RECOVERY_PASS_check_allocations),		\
-	  BCH_FSCK_ERR_accounting_mismatch)
+	  BCH_FSCK_ERR_accounting_mismatch,			\
+	  BCH_FSCK_ERR_accounting_key_replicas_nr_devs_0,	\
+	  BCH_FSCK_ERR_accounting_key_junk_at_end)		\
+	x(backpointer_bucket_gen,				\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_extents_to_backpointers),\
+	  BCH_FSCK_ERR_backpointer_bucket_offset_wrong,		\
+	  BCH_FSCK_ERR_backpointer_to_missing_ptr,		\
+	  BCH_FSCK_ERR_ptr_to_missing_backpointer)		\
+	x(disk_accounting_big_endian,				\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_allocations),		\
+	  BCH_FSCK_ERR_accounting_mismatch,			\
+	  BCH_FSCK_ERR_accounting_key_replicas_nr_devs_0,	\
+	  BCH_FSCK_ERR_accounting_key_junk_at_end)
 
 struct upgrade_downgrade_entry {
 	u64		recovery_passes;
@@ -341,6 +368,9 @@ int bch2_sb_downgrade_update(struct bch_fs *c)
 	     src < downgrade_table + ARRAY_SIZE(downgrade_table);
 	     src++) {
 		if (BCH_VERSION_MAJOR(src->version) != BCH_VERSION_MAJOR(le16_to_cpu(c->disk_sb.sb->version)))
+			continue;
+
+		if (src->version < c->sb.version_incompat)
 			continue;
 
 		struct bch_sb_field_downgrade_entry *dst;

@@ -304,10 +304,40 @@ static void genpd_update_accounting(struct generic_pm_domain *genpd)
 
 	genpd->accounting_time = now;
 }
+
+static void genpd_reflect_residency(struct generic_pm_domain *genpd)
+{
+	struct genpd_governor_data *gd = genpd->gd;
+	struct genpd_power_state *state, *next_state;
+	unsigned int state_idx;
+	s64 sleep_ns, target_ns;
+
+	if (!gd || !gd->reflect_residency)
+		return;
+
+	sleep_ns = ktime_to_ns(ktime_sub(ktime_get(), gd->last_enter));
+	state_idx = genpd->state_idx;
+	state = &genpd->states[state_idx];
+	target_ns = state->power_off_latency_ns + state->residency_ns;
+
+	if (sleep_ns < target_ns) {
+		state->above++;
+	} else if (state_idx < (genpd->state_count -1)) {
+		next_state = &genpd->states[state_idx + 1];
+		target_ns = next_state->power_off_latency_ns +
+			next_state->residency_ns;
+
+		if (sleep_ns >= target_ns)
+			state->below++;
+	}
+
+	gd->reflect_residency = false;
+}
 #else
 static inline void genpd_debug_add(struct generic_pm_domain *genpd) {}
 static inline void genpd_debug_remove(struct generic_pm_domain *genpd) {}
 static inline void genpd_update_accounting(struct generic_pm_domain *genpd) {}
+static inline void genpd_reflect_residency(struct generic_pm_domain *genpd) {}
 #endif
 
 static int _genpd_reeval_performance_state(struct generic_pm_domain *genpd,
@@ -697,6 +727,62 @@ bool dev_pm_genpd_get_hwmode(struct device *dev)
 }
 EXPORT_SYMBOL_GPL(dev_pm_genpd_get_hwmode);
 
+/**
+ * dev_pm_genpd_rpm_always_on() - Control if the PM domain can be powered off.
+ *
+ * @dev: Device for which the PM domain may need to stay on for.
+ * @on: Value to set or unset for the condition.
+ *
+ * For some usecases a consumer driver requires its device to remain power-on
+ * from the PM domain perspective during runtime. This function allows the
+ * behaviour to be dynamically controlled for a device attached to a genpd.
+ *
+ * It is assumed that the users guarantee that the genpd wouldn't be detached
+ * while this routine is getting called.
+ *
+ * Return: Returns 0 on success and negative error values on failures.
+ */
+int dev_pm_genpd_rpm_always_on(struct device *dev, bool on)
+{
+	struct generic_pm_domain *genpd;
+
+	genpd = dev_to_genpd_safe(dev);
+	if (!genpd)
+		return -ENODEV;
+
+	genpd_lock(genpd);
+	dev_gpd_data(dev)->rpm_always_on = on;
+	genpd_unlock(genpd);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(dev_pm_genpd_rpm_always_on);
+
+/**
+ * pm_genpd_inc_rejected() - Adjust the rejected/usage counts for an idle-state.
+ *
+ * @genpd: The PM domain the idle-state belongs to.
+ * @state_idx: The index of the idle-state that failed.
+ *
+ * In some special cases the ->power_off() callback is asynchronously powering
+ * off the PM domain, leading to that it may return zero to indicate success,
+ * even though the actual power-off could fail. To account for this correctly in
+ * the rejected/usage counts for the idle-state statistics, users can call this
+ * function to adjust the values.
+ *
+ * It is assumed that the users guarantee that the genpd doesn't get removed
+ * while this routine is getting called.
+ */
+void pm_genpd_inc_rejected(struct generic_pm_domain *genpd,
+			   unsigned int state_idx)
+{
+	genpd_lock(genpd);
+	genpd->states[genpd->state_idx].rejected++;
+	genpd->states[genpd->state_idx].usage--;
+	genpd_unlock(genpd);
+}
+EXPORT_SYMBOL_GPL(pm_genpd_inc_rejected);
+
 static int _genpd_power_on(struct generic_pm_domain *genpd, bool timed)
 {
 	unsigned int state_idx = genpd->state_idx;
@@ -868,6 +954,10 @@ static int genpd_power_off(struct generic_pm_domain *genpd, bool one_dev_on,
 		if (!pm_runtime_suspended(pdd->dev) ||
 			irq_safe_dev_in_sleep_domain(pdd->dev, genpd))
 			not_suspended++;
+
+		/* The device may need its PM domain to stay powered on. */
+		if (to_gpd_data(pdd)->rpm_always_on)
+			return -EBUSY;
 	}
 
 	if (not_suspended > 1 || (not_suspended == 1 && !one_dev_on))
@@ -921,6 +1011,9 @@ static int genpd_power_on(struct generic_pm_domain *genpd, unsigned int depth)
 
 	if (genpd_status_on(genpd))
 		return 0;
+
+	/* Reflect over the entered idle-states residency for debugfs. */
+	genpd_reflect_residency(genpd);
 
 	/*
 	 * The list is guaranteed not to change while the loop below is being
@@ -1727,6 +1820,7 @@ static void genpd_free_dev_data(struct device *dev,
 
 	spin_unlock_irq(&dev->power.lock);
 
+	dev_pm_opp_clear_config(gpd_data->opp_token);
 	kfree(gpd_data->td);
 	kfree(gpd_data);
 	dev_pm_put_subsys_data(dev);
@@ -2141,6 +2235,11 @@ static int genpd_set_default_power_state(struct generic_pm_domain *genpd)
 	return 0;
 }
 
+static void genpd_provider_release(struct device *dev)
+{
+	/* nothing to be done here */
+}
+
 static int genpd_alloc_data(struct generic_pm_domain *genpd)
 {
 	struct genpd_governor_data *gd = NULL;
@@ -2171,8 +2270,27 @@ static int genpd_alloc_data(struct generic_pm_domain *genpd)
 	}
 
 	genpd->gd = gd;
-	return 0;
+	device_initialize(&genpd->dev);
+	genpd->dev.release = genpd_provider_release;
 
+	if (!genpd_is_dev_name_fw(genpd)) {
+		dev_set_name(&genpd->dev, "%s", genpd->name);
+	} else {
+		ret = ida_alloc(&genpd_ida, GFP_KERNEL);
+		if (ret < 0)
+			goto put;
+
+		genpd->device_id = ret;
+		dev_set_name(&genpd->dev, "%s_%u", genpd->name, genpd->device_id);
+	}
+
+	return 0;
+put:
+	put_device(&genpd->dev);
+	if (genpd->free_states == genpd_free_default_power_state) {
+		kfree(genpd->states);
+		genpd->states = NULL;
+	}
 free:
 	if (genpd_is_cpu_domain(genpd))
 		free_cpumask_var(genpd->cpus);
@@ -2182,6 +2300,9 @@ free:
 
 static void genpd_free_data(struct generic_pm_domain *genpd)
 {
+	put_device(&genpd->dev);
+	if (genpd->device_id != -ENXIO)
+		ida_free(&genpd_ida, genpd->device_id);
 	if (genpd_is_cpu_domain(genpd))
 		free_cpumask_var(genpd->cpus);
 	if (genpd->free_states)
@@ -2270,20 +2391,6 @@ int pm_genpd_init(struct generic_pm_domain *genpd,
 	if (ret)
 		return ret;
 
-	device_initialize(&genpd->dev);
-
-	if (!genpd_is_dev_name_fw(genpd)) {
-		dev_set_name(&genpd->dev, "%s", genpd->name);
-	} else {
-		ret = ida_alloc(&genpd_ida, GFP_KERNEL);
-		if (ret < 0) {
-			put_device(&genpd->dev);
-			return ret;
-		}
-		genpd->device_id = ret;
-		dev_set_name(&genpd->dev, "%s_%u", genpd->name, genpd->device_id);
-	}
-
 	mutex_lock(&gpd_list_lock);
 	list_add(&genpd->gpd_list_node, &gpd_list);
 	mutex_unlock(&gpd_list_lock);
@@ -2324,8 +2431,6 @@ static int genpd_remove(struct generic_pm_domain *genpd)
 	genpd_unlock(genpd);
 	genpd_debug_remove(genpd);
 	cancel_work_sync(&genpd->power_off_work);
-	if (genpd->device_id != -ENXIO)
-		ida_free(&genpd_ida, genpd->device_id);
 	genpd_free_data(genpd);
 
 	pr_debug("%s: removed %s\n", __func__, dev_name(&genpd->dev));
@@ -2903,12 +3008,58 @@ static void genpd_dev_pm_sync(struct device *dev)
 	genpd_queue_power_off_work(pd);
 }
 
+static int genpd_set_required_opp_dev(struct device *dev,
+				      struct device *base_dev)
+{
+	struct dev_pm_opp_config config = {
+		.required_dev = dev,
+	};
+	int ret;
+
+	/* Limit support to non-providers for now. */
+	if (of_property_present(base_dev->of_node, "#power-domain-cells"))
+		return 0;
+
+	if (!dev_pm_opp_of_has_required_opp(base_dev))
+		return 0;
+
+	ret = dev_pm_opp_set_config(base_dev, &config);
+	if (ret < 0)
+		return ret;
+
+	dev_gpd_data(dev)->opp_token = ret;
+	return 0;
+}
+
+static int genpd_set_required_opp(struct device *dev, unsigned int index)
+{
+	int ret, pstate;
+
+	/* Set the default performance state */
+	pstate = of_get_required_opp_performance_state(dev->of_node, index);
+	if (pstate < 0 && pstate != -ENODEV && pstate != -EOPNOTSUPP) {
+		ret = pstate;
+		goto err;
+	} else if (pstate > 0) {
+		ret = dev_pm_genpd_set_performance_state(dev, pstate);
+		if (ret)
+			goto err;
+		dev_gpd_data(dev)->default_pstate = pstate;
+	}
+
+	return 0;
+err:
+	dev_err(dev, "failed to set required performance state for power-domain %s: %d\n",
+		dev_to_genpd(dev)->name, ret);
+	return ret;
+}
+
 static int __genpd_dev_pm_attach(struct device *dev, struct device *base_dev,
-				 unsigned int index, bool power_on)
+				 unsigned int index, unsigned int num_domains,
+				 bool power_on)
 {
 	struct of_phandle_args pd_args;
 	struct generic_pm_domain *pd;
-	int pstate;
 	int ret;
 
 	ret = of_parse_phandle_with_args(dev->of_node, "power-domains",
@@ -2937,17 +3088,20 @@ static int __genpd_dev_pm_attach(struct device *dev, struct device *base_dev,
 	dev->pm_domain->detach = genpd_dev_pm_detach;
 	dev->pm_domain->sync = genpd_dev_pm_sync;
 
-	/* Set the default performance state */
-	pstate = of_get_required_opp_performance_state(dev->of_node, index);
-	if (pstate < 0 && pstate != -ENODEV && pstate != -EOPNOTSUPP) {
-		ret = pstate;
-		goto err;
-	} else if (pstate > 0) {
-		ret = dev_pm_genpd_set_performance_state(dev, pstate);
+	/*
+	 * For a single PM domain the index of the required OPP must be zero, so
+	 * let's try to assign a required dev in that case. In the multiple PM
+	 * domains case, we need platform code to specify the index.
+	 */
+	if (num_domains == 1) {
+		ret = genpd_set_required_opp_dev(dev, base_dev);
 		if (ret)
 			goto err;
-		dev_gpd_data(dev)->default_pstate = pstate;
 	}
+
+	ret = genpd_set_required_opp(dev, index);
+	if (ret)
+		goto err;
 
 	if (power_on) {
 		genpd_lock(pd);
@@ -2969,8 +3123,6 @@ static int __genpd_dev_pm_attach(struct device *dev, struct device *base_dev,
 	return 1;
 
 err:
-	dev_err(dev, "failed to set required performance state for power-domain %s: %d\n",
-		pd->name, ret);
 	genpd_remove_device(pd, dev);
 	return ret;
 }
@@ -3001,7 +3153,7 @@ int genpd_dev_pm_attach(struct device *dev)
 				       "#power-domain-cells") != 1)
 		return 0;
 
-	return __genpd_dev_pm_attach(dev, dev, 0, true);
+	return __genpd_dev_pm_attach(dev, dev, 0, 1, true);
 }
 EXPORT_SYMBOL_GPL(genpd_dev_pm_attach);
 
@@ -3054,7 +3206,7 @@ struct device *genpd_dev_pm_attach_by_id(struct device *dev,
 	}
 
 	/* Try to attach the device to the PM domain at the specified index. */
-	ret = __genpd_dev_pm_attach(virt_dev, dev, index, false);
+	ret = __genpd_dev_pm_attach(virt_dev, dev, index, num_domains, false);
 	if (ret < 1) {
 		device_unregister(virt_dev);
 		return ret ? ERR_PTR(ret) : NULL;
@@ -3122,6 +3274,8 @@ static int genpd_parse_state(struct genpd_power_state *genpd_state,
 	err = of_property_read_u32(state_node, "min-residency-us", &residency);
 	if (!err)
 		genpd_state->residency_ns = 1000LL * residency;
+
+	of_property_read_string(state_node, "idle-state-name", &genpd_state->name);
 
 	genpd_state->power_on_latency_ns = 1000LL * exit_latency;
 	genpd_state->power_off_latency_ns = 1000LL * entry_latency;
@@ -3398,10 +3552,13 @@ static int idle_states_show(struct seq_file *s, void *data)
 	if (ret)
 		return -ERESTARTSYS;
 
-	seq_puts(s, "State          Time Spent(ms) Usage          Rejected\n");
+	seq_puts(s, "State          Time Spent(ms) Usage      Rejected   Above      Below\n");
 
 	for (i = 0; i < genpd->state_count; i++) {
-		idle_time += genpd->states[i].idle_time;
+		struct genpd_power_state *state = &genpd->states[i];
+		char state_name[15];
+
+		idle_time += state->idle_time;
 
 		if (genpd->status == GENPD_STATE_OFF && genpd->state_idx == i) {
 			now = ktime_get_mono_fast_ns();
@@ -3411,9 +3568,14 @@ static int idle_states_show(struct seq_file *s, void *data)
 			}
 		}
 
+		if (!state->name)
+			snprintf(state_name, ARRAY_SIZE(state_name), "S%-13d", i);
+
 		do_div(idle_time, NSEC_PER_MSEC);
-		seq_printf(s, "S%-13i %-14llu %-14llu %llu\n", i, idle_time,
-			   genpd->states[i].usage, genpd->states[i].rejected);
+		seq_printf(s, "%-14s %-14llu %-10llu %-10llu %-10llu %llu\n",
+			   state->name ?: state_name, idle_time,
+			   state->usage, state->rejected, state->above,
+			   state->below);
 	}
 
 	genpd_unlock(genpd);

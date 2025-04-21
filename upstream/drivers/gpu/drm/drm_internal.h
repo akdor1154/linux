@@ -48,6 +48,14 @@ struct drm_prime_file_private;
 struct drm_printer;
 struct drm_vblank_crtc;
 
+/* drm_client_event.c */
+#if defined(CONFIG_DRM_CLIENT)
+void drm_client_debugfs_init(struct drm_device *dev);
+#else
+static inline void drm_client_debugfs_init(struct drm_device *dev)
+{ }
+#endif
+
 /* drm_file.c */
 extern struct mutex drm_global_mutex;
 bool drm_dev_needs_global_mutex(struct drm_device *dev);
@@ -171,8 +179,8 @@ int drm_gem_pin_locked(struct drm_gem_object *obj);
 void drm_gem_unpin_locked(struct drm_gem_object *obj);
 int drm_gem_pin(struct drm_gem_object *obj);
 void drm_gem_unpin(struct drm_gem_object *obj);
-int drm_gem_vmap(struct drm_gem_object *obj, struct iosys_map *map);
-void drm_gem_vunmap(struct drm_gem_object *obj, struct iosys_map *map);
+int drm_gem_vmap_locked(struct drm_gem_object *obj, struct iosys_map *map);
+void drm_gem_vunmap_locked(struct drm_gem_object *obj, struct iosys_map *map);
 
 /* drm_debugfs.c drm_debugfs_crc.c */
 #if defined(CONFIG_DEBUG_FS)

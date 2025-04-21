@@ -37,7 +37,7 @@ struct amdgpu_job;
 struct amdgpu_vm;
 
 /* max number of rings */
-#define AMDGPU_MAX_RINGS		124
+#define AMDGPU_MAX_RINGS		149
 #define AMDGPU_MAX_HWIP_RINGS		64
 #define AMDGPU_MAX_GFX_RINGS		2
 #define AMDGPU_MAX_SW_GFX_RINGS         2
@@ -82,6 +82,7 @@ enum amdgpu_ring_type {
 	AMDGPU_RING_TYPE_KIQ,
 	AMDGPU_RING_TYPE_MES,
 	AMDGPU_RING_TYPE_UMSCH_MM,
+	AMDGPU_RING_TYPE_CPER,
 };
 
 enum amdgpu_ib_pool_type {
@@ -237,6 +238,7 @@ struct amdgpu_ring_funcs {
 	void (*patch_de)(struct amdgpu_ring *ring, unsigned offset);
 	int (*reset)(struct amdgpu_ring *ring, unsigned int vmid);
 	void (*emit_cleaner_shader)(struct amdgpu_ring *ring);
+	bool (*is_guilty)(struct amdgpu_ring *ring);
 };
 
 struct amdgpu_ring {
@@ -246,7 +248,7 @@ struct amdgpu_ring {
 	struct drm_gpu_scheduler	sched;
 
 	struct amdgpu_bo	*ring_obj;
-	volatile uint32_t	*ring;
+	uint32_t		*ring;
 	unsigned		rptr_offs;
 	u64			rptr_gpu_addr;
 	volatile u32		*rptr_cpu_addr;
@@ -288,25 +290,22 @@ struct amdgpu_ring {
 	u64			cond_exe_gpu_addr;
 	volatile u32		*cond_exe_cpu_addr;
 	unsigned int		set_q_mode_offs;
-	volatile u32		*set_q_mode_ptr;
+	u32			*set_q_mode_ptr;
 	u64			set_q_mode_token;
 	unsigned		vm_hub;
 	unsigned		vm_inv_eng;
 	struct dma_fence	*vmid_wait;
 	bool			has_compute_vm_bug;
 	bool			no_scheduler;
+	bool			no_user_submission;
 	int			hw_prio;
 	unsigned 		num_hw_submission;
 	atomic_t		*sched_score;
 
-	/* used for mes */
-	bool			is_mes_queue;
-	uint32_t		hw_queue_id;
-	struct amdgpu_mes_ctx_data *mes_ctx;
-
 	bool            is_sw_ring;
 	unsigned int    entry_index;
-
+	/* store the cached rptr to restore after reset */
+	uint64_t cached_rptr;
 };
 
 #define amdgpu_ring_parse_cs(r, p, job, ib) ((r)->funcs->parse_cs((p), (job), (ib)))
@@ -377,8 +376,6 @@ static inline void amdgpu_ring_clear_ring(struct amdgpu_ring *ring)
 
 static inline void amdgpu_ring_write(struct amdgpu_ring *ring, uint32_t v)
 {
-	if (ring->count_dw <= 0)
-		DRM_ERROR("amdgpu: writing more dwords to the ring than expected!\n");
 	ring->ring[ring->wptr++ & ring->buf_mask] = v;
 	ring->wptr &= ring->ptr_mask;
 	ring->count_dw--;
@@ -388,13 +385,8 @@ static inline void amdgpu_ring_write_multiple(struct amdgpu_ring *ring,
 					      void *src, int count_dw)
 {
 	unsigned occupied, chunk1, chunk2;
-	void *dst;
-
-	if (unlikely(ring->count_dw < count_dw))
-		DRM_ERROR("amdgpu: writing more dwords to the ring than expected!\n");
 
 	occupied = ring->wptr & ring->buf_mask;
-	dst = (void *)&ring->ring[occupied];
 	chunk1 = ring->buf_mask + 1 - occupied;
 	chunk1 = (chunk1 >= count_dw) ? count_dw : chunk1;
 	chunk2 = count_dw - chunk1;
@@ -402,12 +394,11 @@ static inline void amdgpu_ring_write_multiple(struct amdgpu_ring *ring,
 	chunk2 <<= 2;
 
 	if (chunk1)
-		memcpy(dst, src, chunk1);
+		memcpy(&ring->ring[occupied], src, chunk1);
 
 	if (chunk2) {
 		src += chunk1;
-		dst = (void *)ring->ring;
-		memcpy(dst, src, chunk2);
+		memcpy(ring->ring, src, chunk2);
 	}
 
 	ring->wptr += count_dw;
@@ -439,15 +430,6 @@ static inline void amdgpu_ring_patch_cond_exec(struct amdgpu_ring *ring,
 	ring->ring[offset] = cur - offset;
 }
 
-#define amdgpu_mes_ctx_get_offs_gpu_addr(ring, offset)			\
-	(ring->is_mes_queue && ring->mes_ctx ?				\
-	 (ring->mes_ctx->meta_data_gpu_addr + offset) : 0)
-
-#define amdgpu_mes_ctx_get_offs_cpu_addr(ring, offset)			\
-	(ring->is_mes_queue && ring->mes_ctx ?				\
-	 (void *)((uint8_t *)(ring->mes_ctx->meta_data_ptr) + offset) : \
-	 NULL)
-
 int amdgpu_ring_test_helper(struct amdgpu_ring *ring);
 
 void amdgpu_debugfs_ring_init(struct amdgpu_device *adev,
@@ -470,8 +452,7 @@ int amdgpu_ib_get(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 		  unsigned size,
 		  enum amdgpu_ib_pool_type pool,
 		  struct amdgpu_ib *ib);
-void amdgpu_ib_free(struct amdgpu_device *adev, struct amdgpu_ib *ib,
-		    struct dma_fence *f);
+void amdgpu_ib_free(struct amdgpu_ib *ib, struct dma_fence *f);
 int amdgpu_ib_schedule(struct amdgpu_ring *ring, unsigned num_ibs,
 		       struct amdgpu_ib *ibs, struct amdgpu_job *job,
 		       struct dma_fence **f);

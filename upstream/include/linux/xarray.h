@@ -965,10 +965,12 @@ static inline int __must_check xa_alloc_irq(struct xarray *xa, u32 *id,
  * Must only be operated on an xarray initialized with flag XA_FLAGS_ALLOC set
  * in xa_init_flags().
  *
+ * Note that callers interested in whether wrapping has occurred should
+ * use __xa_alloc_cyclic() instead.
+ *
  * Context: Any context.  Takes and releases the xa_lock.  May sleep if
  * the @gfp flags permit.
- * Return: 0 if the allocation succeeded without wrapping.  1 if the
- * allocation succeeded after wrapping, -ENOMEM if memory could not be
+ * Return: 0 if the allocation succeeded, -ENOMEM if memory could not be
  * allocated or -EBUSY if there are no free entries in @limit.
  */
 static inline int xa_alloc_cyclic(struct xarray *xa, u32 *id, void *entry,
@@ -981,7 +983,7 @@ static inline int xa_alloc_cyclic(struct xarray *xa, u32 *id, void *entry,
 	err = __xa_alloc_cyclic(xa, id, entry, limit, next, gfp);
 	xa_unlock(xa);
 
-	return err;
+	return err < 0 ? err : 0;
 }
 
 /**
@@ -1002,10 +1004,12 @@ static inline int xa_alloc_cyclic(struct xarray *xa, u32 *id, void *entry,
  * Must only be operated on an xarray initialized with flag XA_FLAGS_ALLOC set
  * in xa_init_flags().
  *
+ * Note that callers interested in whether wrapping has occurred should
+ * use __xa_alloc_cyclic() instead.
+ *
  * Context: Any context.  Takes and releases the xa_lock while
  * disabling softirqs.  May sleep if the @gfp flags permit.
- * Return: 0 if the allocation succeeded without wrapping.  1 if the
- * allocation succeeded after wrapping, -ENOMEM if memory could not be
+ * Return: 0 if the allocation succeeded, -ENOMEM if memory could not be
  * allocated or -EBUSY if there are no free entries in @limit.
  */
 static inline int xa_alloc_cyclic_bh(struct xarray *xa, u32 *id, void *entry,
@@ -1018,7 +1022,7 @@ static inline int xa_alloc_cyclic_bh(struct xarray *xa, u32 *id, void *entry,
 	err = __xa_alloc_cyclic(xa, id, entry, limit, next, gfp);
 	xa_unlock_bh(xa);
 
-	return err;
+	return err < 0 ? err : 0;
 }
 
 /**
@@ -1039,10 +1043,12 @@ static inline int xa_alloc_cyclic_bh(struct xarray *xa, u32 *id, void *entry,
  * Must only be operated on an xarray initialized with flag XA_FLAGS_ALLOC set
  * in xa_init_flags().
  *
+ * Note that callers interested in whether wrapping has occurred should
+ * use __xa_alloc_cyclic() instead.
+ *
  * Context: Process context.  Takes and releases the xa_lock while
  * disabling interrupts.  May sleep if the @gfp flags permit.
- * Return: 0 if the allocation succeeded without wrapping.  1 if the
- * allocation succeeded after wrapping, -ENOMEM if memory could not be
+ * Return: 0 if the allocation succeeded, -ENOMEM if memory could not be
  * allocated or -EBUSY if there are no free entries in @limit.
  */
 static inline int xa_alloc_cyclic_irq(struct xarray *xa, u32 *id, void *entry,
@@ -1055,7 +1061,7 @@ static inline int xa_alloc_cyclic_irq(struct xarray *xa, u32 *id, void *entry,
 	err = __xa_alloc_cyclic(xa, id, entry, limit, next, gfp);
 	xa_unlock_irq(xa);
 
-	return err;
+	return err < 0 ? err : 0;
 }
 
 /**
@@ -1407,16 +1413,44 @@ struct xa_state {
 			order - (order % XA_CHUNK_SHIFT),	\
 			(1U << (order % XA_CHUNK_SHIFT)) - 1)
 
+/**
+ * xas_invalid() - Is the xas in a retry or error state?
+ * @xas: XArray operation state.
+ *
+ * Return: %true if the xas cannot be used for operations.
+ */
+static inline bool xas_invalid(const struct xa_state *xas)
+{
+	return (unsigned long)xas->xa_node & 3;
+}
+
+/**
+ * xas_valid() - Is the xas a valid cursor into the array?
+ * @xas: XArray operation state.
+ *
+ * Return: %true if the xas can be used for operations.
+ */
+static inline bool xas_valid(const struct xa_state *xas)
+{
+	return !xas_invalid(xas);
+}
+
+static inline struct xa_state *XAS_INVALID(struct xa_state *xas)
+{
+	XA_NODE_BUG_ON(xas->xa_node, xas_valid(xas));
+	return xas;
+}
+
 #define xas_marked(xas, mark)	xa_marked((xas)->xa, (mark))
-#define xas_trylock(xas)	xa_trylock((xas)->xa)
-#define xas_lock(xas)		xa_lock((xas)->xa)
+#define xas_trylock(xas)	xa_trylock(XAS_INVALID(xas)->xa)
+#define xas_lock(xas)		xa_lock(XAS_INVALID(xas)->xa)
 #define xas_unlock(xas)		xa_unlock((xas)->xa)
-#define xas_lock_bh(xas)	xa_lock_bh((xas)->xa)
+#define xas_lock_bh(xas)	xa_lock_bh(XAS_INVALID(xas)->xa)
 #define xas_unlock_bh(xas)	xa_unlock_bh((xas)->xa)
-#define xas_lock_irq(xas)	xa_lock_irq((xas)->xa)
+#define xas_lock_irq(xas)	xa_lock_irq(XAS_INVALID(xas)->xa)
 #define xas_unlock_irq(xas)	xa_unlock_irq((xas)->xa)
 #define xas_lock_irqsave(xas, flags) \
-				xa_lock_irqsave((xas)->xa, flags)
+				xa_lock_irqsave(XAS_INVALID(xas)->xa, flags)
 #define xas_unlock_irqrestore(xas, flags) \
 				xa_unlock_irqrestore((xas)->xa, flags)
 
@@ -1443,28 +1477,6 @@ static inline int xas_error(const struct xa_state *xas)
 static inline void xas_set_err(struct xa_state *xas, long err)
 {
 	xas->xa_node = XA_ERROR(err);
-}
-
-/**
- * xas_invalid() - Is the xas in a retry or error state?
- * @xas: XArray operation state.
- *
- * Return: %true if the xas cannot be used for operations.
- */
-static inline bool xas_invalid(const struct xa_state *xas)
-{
-	return (unsigned long)xas->xa_node & 3;
-}
-
-/**
- * xas_valid() - Is the xas a valid cursor into the array?
- * @xas: XArray operation state.
- *
- * Return: %true if the xas can be used for operations.
- */
-static inline bool xas_valid(const struct xa_state *xas)
-{
-	return !xas_invalid(xas);
 }
 
 /**
@@ -1555,6 +1567,8 @@ int xa_get_order(struct xarray *, unsigned long index);
 int xas_get_order(struct xa_state *xas);
 void xas_split(struct xa_state *, void *entry, unsigned int order);
 void xas_split_alloc(struct xa_state *, void *entry, unsigned int order, gfp_t);
+void xas_try_split(struct xa_state *xas, void *entry, unsigned int order);
+unsigned int xas_try_split_min_order(unsigned int order);
 #else
 static inline int xa_get_order(struct xarray *xa, unsigned long index)
 {
@@ -1576,6 +1590,17 @@ static inline void xas_split_alloc(struct xa_state *xas, void *entry,
 		unsigned int order, gfp_t gfp)
 {
 }
+
+static inline void xas_try_split(struct xa_state *xas, void *entry,
+		unsigned int order)
+{
+}
+
+static inline unsigned int xas_try_split_min_order(unsigned int order)
+{
+	return 0;
+}
+
 #endif
 
 /**

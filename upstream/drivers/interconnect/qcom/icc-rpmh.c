@@ -280,7 +280,14 @@ int qcom_icc_rpmh_probe(struct platform_device *pdev)
 		if (!qn)
 			continue;
 
-		node = icc_node_create(qn->id);
+		if (desc->alloc_dyn_id) {
+			if (!qn->node)
+				qn->node = icc_node_create_dyn();
+			node = qn->node;
+		} else {
+			node = icc_node_create(qn->id);
+		}
+
 		if (IS_ERR(node)) {
 			ret = PTR_ERR(node);
 			goto err_remove_nodes;
@@ -290,8 +297,12 @@ int qcom_icc_rpmh_probe(struct platform_device *pdev)
 		node->data = qn;
 		icc_node_add(node, provider);
 
-		for (j = 0; j < qn->num_links; j++)
-			icc_link_create(node, qn->links[j]);
+		for (j = 0; j < qn->num_links; j++) {
+			if (desc->alloc_dyn_id)
+				icc_link_nodes(node, &qn->link_nodes[j]->node);
+			else
+				icc_link_create(node, qn->links[j]);
+		}
 
 		data->nodes[i] = node;
 	}
@@ -311,7 +322,10 @@ int qcom_icc_rpmh_probe(struct platform_device *pdev)
 		}
 
 		qp->num_clks = devm_clk_bulk_get_all(qp->dev, &qp->clks);
-		if (qp->num_clks < 0 || (!qp->num_clks && desc->qos_clks_required)) {
+		if (qp->num_clks == -EPROBE_DEFER)
+			return dev_err_probe(dev, qp->num_clks, "Failed to get QoS clocks\n");
+
+		if (qp->num_clks < 0 || (!qp->num_clks && desc->qos_requires_clocks)) {
 			dev_info(dev, "Skipping QoS, failed to get clk: %d\n", qp->num_clks);
 			goto skip_qos_config;
 		}

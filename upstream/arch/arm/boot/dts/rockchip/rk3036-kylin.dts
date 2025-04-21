@@ -8,6 +8,12 @@
 	model = "Rockchip RK3036 KylinBoard";
 	compatible = "rockchip,rk3036-kylin", "rockchip,rk3036";
 
+	aliases {
+		mmc0 = &emmc;
+		mmc1 = &sdmmc;
+		mmc2 = &sdio;
+	};
+
 	chosen {
 		stdout-path = "serial2:115200n8";
 	};
@@ -80,7 +86,7 @@
 		};
 	};
 
-	vcc_sys: vsys-regulator {
+	vcc_sys: regulator-vsys {
 		compatible = "regulator-fixed";
 		regulator-name = "vcc_sys";
 		regulator-min-microvolt = <5000000>;

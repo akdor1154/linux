@@ -156,6 +156,7 @@ void drm_aux_hpd_bridge_notify(struct device *dev, enum drm_connector_status sta
 EXPORT_SYMBOL_GPL(drm_aux_hpd_bridge_notify);
 
 static int drm_aux_hpd_bridge_attach(struct drm_bridge *bridge,
+				     struct drm_encoder *encoder,
 				     enum drm_bridge_attach_flags flags)
 {
 	return flags & DRM_BRIDGE_ATTACH_NO_CONNECTOR ? 0 : -EINVAL;
@@ -179,6 +180,10 @@ static int drm_aux_hpd_bridge_probe(struct auxiliary_device *auxdev,
 	data->bridge.of_node = dev_get_platdata(data->dev);
 	data->bridge.ops = DRM_BRIDGE_OP_HPD;
 	data->bridge.type = id->driver_data;
+
+	/* passthrough data, allow everything */
+	data->bridge.interlace_allowed = true;
+	data->bridge.ycbcr_420_allowed = true;
 
 	auxiliary_set_drvdata(auxdev, data);
 

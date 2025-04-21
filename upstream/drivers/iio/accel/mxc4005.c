@@ -11,6 +11,7 @@
 #include <linux/iio/iio.h>
 #include <linux/mod_devicetable.h>
 #include <linux/regmap.h>
+#include <linux/types.h>
 #include <linux/iio/sysfs.h>
 #include <linux/iio/trigger.h>
 #include <linux/iio/buffer.h>
@@ -69,7 +70,7 @@ struct mxc4005_data {
 	/* Ensure timestamp is naturally aligned */
 	struct {
 		__be16 chans[3];
-		s64 timestamp __aligned(8);
+		aligned_s64 timestamp;
 	} scan;
 	bool trigger_enabled;
 	unsigned int control;
@@ -572,14 +573,14 @@ static const struct acpi_device_id mxc4005_acpi_match[] = {
 	{"MXC4005",	0},
 	{"MXC6655",	0},
 	{"MDA6655",	0},
-	{ },
+	{ }
 };
 MODULE_DEVICE_TABLE(acpi, mxc4005_acpi_match);
 
 static const struct of_device_id mxc4005_of_match[] = {
 	{ .compatible = "memsic,mxc4005", },
 	{ .compatible = "memsic,mxc6655", },
-	{ },
+	{ }
 };
 MODULE_DEVICE_TABLE(of, mxc4005_of_match);
 

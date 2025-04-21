@@ -65,6 +65,12 @@ struct ksz_chip_data {
 	u8 num_tx_queues;
 	u8 num_ipms; /* number of Internal Priority Maps */
 	bool tc_cbs_supported;
+
+	/**
+	 * @phy_side_mdio_supported: Indicates if the chip supports an additional
+	 * side MDIO channel for accessing integrated PHYs.
+	 */
+	bool phy_side_mdio_supported;
 	const struct ksz_dev_ops *ops;
 	const struct phylink_mac_ops *phylink_mac_ops;
 	bool phy_errata_9477;
@@ -86,6 +92,7 @@ struct ksz_chip_data {
 	bool supports_rgmii[KSZ_MAX_NUM_PORTS];
 	bool internal_phy[KSZ_MAX_NUM_PORTS];
 	bool gbit_capable[KSZ_MAX_NUM_PORTS];
+	bool ptp_capable;
 	const struct regmap_access_table *wr_table;
 	const struct regmap_access_table *rd_table;
 };
@@ -191,6 +198,22 @@ struct ksz_device {
 	struct ksz_switch_macaddr *switch_macaddr;
 	struct net_device *hsr_dev;     /* HSR */
 	u8 hsr_ports;
+
+	/**
+	 * @phy_addr_map: Array mapping switch ports to their corresponding PHY
+	 * addresses.
+	 */
+	u8 phy_addr_map[KSZ_MAX_NUM_PORTS];
+
+	/**
+	 * @parent_mdio_bus: Pointer to the external MDIO bus controller.
+	 *
+	 * This points to an external MDIO bus controller that is used to access
+	 * the  PHYs integrated within the switch. Unlike an integrated MDIO
+	 * bus, this external controller provides a direct path for managing
+	 * the switch’s internal PHYs, bypassing the main SPI interface.
+	 */
+	struct mii_bus *parent_mdio_bus;
 };
 
 /* List of supported models */
@@ -214,6 +237,7 @@ enum ksz_model {
 	LAN9372,
 	LAN9373,
 	LAN9374,
+	LAN9646,
 };
 
 enum ksz_regs {
@@ -326,6 +350,43 @@ struct ksz_dev_ops {
 	void (*port_cleanup)(struct ksz_device *dev, int port);
 	void (*port_setup)(struct ksz_device *dev, int port, bool cpu_port);
 	int (*set_ageing_time)(struct ksz_device *dev, unsigned int msecs);
+
+	/**
+	 * @mdio_bus_preinit: Function pointer to pre-initialize the MDIO bus
+	 *                    for accessing PHYs.
+	 * @dev: Pointer to device structure.
+	 * @side_mdio: Boolean indicating if the PHYs are accessed over a side
+	 *             MDIO bus.
+	 *
+	 * This function pointer is used to configure the MDIO bus for PHY
+	 * access before initiating regular PHY operations. It enables either
+	 * SPI/I2C or side MDIO access modes by unlocking necessary registers
+	 * and setting up access permissions for the selected mode.
+	 *
+	 * Return:
+	 *  - 0 on success.
+	 *  - Negative error code on failure.
+	 */
+	int (*mdio_bus_preinit)(struct ksz_device *dev, bool side_mdio);
+
+	/**
+	 * @create_phy_addr_map: Function pointer to create a port-to-PHY
+	 *                       address map.
+	 * @dev: Pointer to device structure.
+	 * @side_mdio: Boolean indicating if the PHYs are accessed over a side
+	 *             MDIO bus.
+	 *
+	 * This function pointer is responsible for mapping switch ports to PHY
+	 * addresses according to the configured access mode (SPI or side MDIO)
+	 * and the device’s strap configuration. The mapping setup may vary
+	 * depending on the chip variant and configuration. Ensures the correct
+	 * address mapping for PHY communication.
+	 *
+	 * Return:
+	 *  - 0 on success.
+	 *  - Negative error code on failure (e.g., invalid configuration).
+	 */
+	int (*create_phy_addr_map)(struct ksz_device *dev, bool side_mdio);
 	int (*r_phy)(struct ksz_device *dev, u16 phy, u16 reg, u16 *val);
 	int (*w_phy)(struct ksz_device *dev, u16 phy, u16 reg, u16 val);
 	void (*r_mib_cnt)(struct ksz_device *dev, int port, u16 addr,
@@ -384,6 +445,8 @@ struct ksz_dev_ops {
 struct ksz_device *ksz_switch_alloc(struct device *base, void *priv);
 int ksz_switch_register(struct ksz_device *dev);
 void ksz_switch_remove(struct ksz_device *dev);
+int ksz_switch_suspend(struct device *dev);
+int ksz_switch_resume(struct device *dev);
 
 void ksz_init_mib_timer(struct ksz_device *dev);
 bool ksz_is_port_mac_global_usable(struct dsa_switch *ds, int port);
@@ -772,6 +835,25 @@ static inline bool is_lan937x_tx_phy(struct ksz_device *dev, int port)
 #define SW_DRIVE_STRENGTH_28MA		7
 #define SW_HI_SPEED_DRIVE_STRENGTH_S	4
 #define SW_LO_SPEED_DRIVE_STRENGTH_S	0
+
+/* TXQ Split Control Register for per-port, per-queue configuration.
+ * Register 0xAF is TXQ Split for Q3 on Port 1.
+ * Register offset formula: 0xAF + (port * 4) + (3 - queue)
+ *   where: port = 0..2, queue = 0..3
+ */
+#define KSZ8873_TXQ_SPLIT_CTRL_REG(port, queue) \
+	(0xAF + ((port) * 4) + (3 - (queue)))
+
+/* Bit 7 selects between:
+ *   0 = Strict priority mode (highest-priority queue first)
+ *   1 = Weighted Fair Queuing (WFQ) mode:
+ *       Queue weights: Q3:Q2:Q1:Q0 = 8:4:2:1
+ *       If any queues are empty, weight is redistributed.
+ *
+ * Note: This is referred to as "Weighted Fair Queuing" (WFQ) in KSZ8863/8873
+ * documentation, and as "Weighted Round Robin" (WRR) in KSZ9477 family docs.
+ */
+#define KSZ8873_TXQ_WFQ_ENABLE		BIT(7)
 
 #define KSZ9477_REG_PORT_OUT_RATE_0	0x0420
 #define KSZ9477_OUT_RATE_NO_LIMIT	0

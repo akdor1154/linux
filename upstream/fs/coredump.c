@@ -43,6 +43,9 @@
 #include <linux/timekeeping.h>
 #include <linux/sysctl.h>
 #include <linux/elf.h>
+#include <linux/pidfs.h>
+#include <uapi/linux/pidfd.h>
+#include <linux/vfsdebug.h>
 
 #include <linux/uaccess.h>
 #include <asm/mmu_context.h>
@@ -60,9 +63,16 @@ static void free_vma_snapshot(struct coredump_params *cprm);
 #define CORE_FILE_NOTE_SIZE_DEFAULT (4*1024*1024)
 /* Define a reasonable max cap */
 #define CORE_FILE_NOTE_SIZE_MAX (16*1024*1024)
+/*
+ * File descriptor number for the pidfd for the thread-group leader of
+ * the coredumping task installed into the usermode helper's file
+ * descriptor table.
+ */
+#define COREDUMP_PIDFD_NUMBER 3
 
 static int core_uses_pid;
 static unsigned int core_pipe_limit;
+static unsigned int core_sort_vma;
 static char core_pattern[CORENAME_MAX_SIZE] = "core";
 static int core_name_size = CORENAME_MAX_SIZE;
 unsigned int core_file_note_size_limit = CORE_FILE_NOTE_SIZE_DEFAULT;
@@ -338,6 +348,27 @@ static int format_corename(struct core_name *cn, struct coredump_params *cprm,
 			case 'C':
 				err = cn_printf(cn, "%d", cprm->cpu);
 				break;
+			/* pidfd number */
+			case 'F': {
+				/*
+				 * Installing a pidfd only makes sense if
+				 * we actually spawn a usermode helper.
+				 */
+				if (!ispipe)
+					break;
+
+				/*
+				 * Note that we'll install a pidfd for the
+				 * thread-group leader. We know that task
+				 * linkage hasn't been removed yet and even if
+				 * this @current isn't the actual thread-group
+				 * leader we know that the thread-group leader
+				 * cannot be reaped until @current has exited.
+				 */
+				cprm->pid = task_tgid(current);
+				err = cn_printf(cn, "%d", COREDUMP_PIDFD_NUMBER);
+				break;
+			}
 			default:
 				break;
 			}
@@ -492,7 +523,7 @@ static void wait_for_dump_helpers(struct file *file)
 }
 
 /*
- * umh_pipe_setup
+ * umh_coredump_setup
  * helper function to customize the process used
  * to collect the core in userspace.  Specifically
  * it sets up a pipe and installs it as fd 0 (stdin)
@@ -502,11 +533,34 @@ static void wait_for_dump_helpers(struct file *file)
  * is a special value that we use to trap recursive
  * core dumps
  */
-static int umh_pipe_setup(struct subprocess_info *info, struct cred *new)
+static int umh_coredump_setup(struct subprocess_info *info, struct cred *new)
 {
 	struct file *files[2];
 	struct coredump_params *cp = (struct coredump_params *)info->data;
-	int err = create_pipe_files(files, 0);
+	int err;
+
+	if (cp->pid) {
+		struct file *pidfs_file __free(fput) = NULL;
+
+		pidfs_file = pidfs_alloc_file(cp->pid, 0);
+		if (IS_ERR(pidfs_file))
+			return PTR_ERR(pidfs_file);
+
+		/*
+		 * Usermode helpers are childen of either
+		 * system_unbound_wq or of kthreadd. So we know that
+		 * we're starting off with a clean file descriptor
+		 * table. So we should always be able to use
+		 * COREDUMP_PIDFD_NUMBER as our file descriptor value.
+		 */
+		VFS_WARN_ON_ONCE((pidfs_file = fget_raw(COREDUMP_PIDFD_NUMBER)) != NULL);
+
+		err = replace_fd(COREDUMP_PIDFD_NUMBER, pidfs_file, 0);
+		if (err < 0)
+			return err;
+	}
+
+	err = create_pipe_files(files, 0);
 	if (err)
 		return err;
 
@@ -514,10 +568,13 @@ static int umh_pipe_setup(struct subprocess_info *info, struct cred *new)
 
 	err = replace_fd(0, files[0], 0);
 	fput(files[0]);
+	if (err < 0)
+		return err;
+
 	/* and disallow core files too */
 	current->signal->rlim[RLIMIT_CORE] = (struct rlimit){1, 1};
 
-	return err;
+	return 0;
 }
 
 void do_coredump(const kernel_siginfo_t *siginfo)
@@ -592,7 +649,7 @@ void do_coredump(const kernel_siginfo_t *siginfo)
 		}
 
 		if (cprm.limit == 1) {
-			/* See umh_pipe_setup() which sets RLIMIT_CORE = 1.
+			/* See umh_coredump_setup() which sets RLIMIT_CORE = 1.
 			 *
 			 * Normally core limits are irrelevant to pipes, since
 			 * we're not writing to the file system, but we use
@@ -631,7 +688,7 @@ void do_coredump(const kernel_siginfo_t *siginfo)
 		retval = -ENOMEM;
 		sub_info = call_usermodehelper_setup(helper_argv[0],
 						helper_argv, NULL, GFP_KERNEL,
-						umh_pipe_setup, NULL, &cprm);
+						umh_coredump_setup, NULL, &cprm);
 		if (sub_info)
 			retval = call_usermodehelper_exec(sub_info,
 							  UMH_WAIT_EXEC);
@@ -925,13 +982,22 @@ int dump_user_range(struct coredump_params *cprm, unsigned long start,
 {
 	unsigned long addr;
 	struct page *dump_page;
+	int locked, ret;
 
 	dump_page = dump_page_alloc();
 	if (!dump_page)
 		return 0;
 
+	ret = 0;
+	locked = 0;
 	for (addr = start; addr < start + len; addr += PAGE_SIZE) {
 		struct page *page;
+
+		if (!locked) {
+			if (mmap_read_lock_killable(current->mm))
+				goto out;
+			locked = 1;
+		}
 
 		/*
 		 * To avoid having to allocate page tables for virtual address
@@ -940,20 +1006,38 @@ int dump_user_range(struct coredump_params *cprm, unsigned long start,
 		 * NULL when encountering an empty page table entry that would
 		 * otherwise have been filled with the zero page.
 		 */
-		page = get_dump_page(addr);
+		page = get_dump_page(addr, &locked);
 		if (page) {
+			if (locked) {
+				mmap_read_unlock(current->mm);
+				locked = 0;
+			}
 			int stop = !dump_emit_page(cprm, dump_page_copy(page, dump_page));
 			put_page(page);
-			if (stop) {
-				dump_page_free(dump_page);
-				return 0;
-			}
+			if (stop)
+				goto out;
 		} else {
 			dump_skip(cprm, PAGE_SIZE);
 		}
+
+		if (dump_interrupted())
+			goto out;
+
+		if (!need_resched())
+			continue;
+		if (locked) {
+			mmap_read_unlock(current->mm);
+			locked = 0;
+		}
+		cond_resched();
 	}
+	ret = 1;
+out:
+	if (locked)
+		mmap_read_unlock(current->mm);
+
 	dump_page_free(dump_page);
-	return 1;
+	return ret;
 }
 #endif
 
@@ -994,7 +1078,7 @@ static int proc_dostring_coredump(const struct ctl_table *table, int write,
 static const unsigned int core_file_note_size_min = CORE_FILE_NOTE_SIZE_DEFAULT;
 static const unsigned int core_file_note_size_max = CORE_FILE_NOTE_SIZE_MAX;
 
-static struct ctl_table coredump_sysctls[] = {
+static const struct ctl_table coredump_sysctls[] = {
 	{
 		.procname	= "core_uses_pid",
 		.data		= &core_uses_pid,
@@ -1014,7 +1098,9 @@ static struct ctl_table coredump_sysctls[] = {
 		.data		= &core_pipe_limit,
 		.maxlen		= sizeof(unsigned int),
 		.mode		= 0644,
-		.proc_handler	= proc_dointvec,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_INT_MAX,
 	},
 	{
 		.procname       = "core_file_note_size_limit",
@@ -1024,6 +1110,15 @@ static struct ctl_table coredump_sysctls[] = {
 		.proc_handler	= proc_douintvec_minmax,
 		.extra1		= (unsigned int *)&core_file_note_size_min,
 		.extra2		= (unsigned int *)&core_file_note_size_max,
+	},
+	{
+		.procname	= "core_sort_vma",
+		.data		= &core_sort_vma,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_douintvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
 	},
 };
 
@@ -1255,8 +1350,9 @@ static bool dump_vma_snapshot(struct coredump_params *cprm)
 		cprm->vma_data_size += m->dump_size;
 	}
 
-	sort(cprm->vma_meta, cprm->vma_count, sizeof(*cprm->vma_meta),
-		cmp_vma_size, NULL);
+	if (core_sort_vma)
+		sort(cprm->vma_meta, cprm->vma_count, sizeof(*cprm->vma_meta),
+		     cmp_vma_size, NULL);
 
 	return true;
 }

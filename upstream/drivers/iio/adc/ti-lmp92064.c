@@ -199,7 +199,7 @@ static irqreturn_t lmp92064_trigger_handler(int irq, void *p)
 	struct lmp92064_adc_priv *priv = iio_priv(indio_dev);
 	struct {
 		u16 values[2];
-		int64_t timestamp __aligned(8);
+		aligned_s64 timestamp;
 	} data;
 	int ret;
 
@@ -366,7 +366,7 @@ MODULE_DEVICE_TABLE(spi, lmp92064_id_table);
 
 static const struct of_device_id lmp92064_of_table[] = {
 	{ .compatible = "ti,lmp92064" },
-	{}
+	{ }
 };
 MODULE_DEVICE_TABLE(of, lmp92064_of_table);
 

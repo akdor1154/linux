@@ -2,8 +2,10 @@
 #ifndef __KVM_X86_VMX_POSTED_INTR_H
 #define __KVM_X86_VMX_POSTED_INTR_H
 
-#include <linux/find.h>
+#include <linux/bitmap.h>
 #include <asm/posted_intr.h>
+
+struct pi_desc *vcpu_to_pi_desc(struct kvm_vcpu *vcpu);
 
 void vmx_vcpu_pi_load(struct kvm_vcpu *vcpu, int cpu);
 void vmx_vcpu_pi_put(struct kvm_vcpu *vcpu);

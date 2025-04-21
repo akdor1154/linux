@@ -154,7 +154,7 @@ static void xgene_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
  * X-Gene v1 only has 16 MSI GIC IRQs for 2048 MSI vectors.  To maintain
  * the expected behaviour of .set_affinity for each MSI interrupt, the 16
  * MSI GIC IRQs are statically allocated to 8 X-Gene v1 cores (2 GIC IRQs
- * for each core).  The MSI vector is moved fom 1 MSI GIC IRQ to another
+ * for each core).  The MSI vector is moved from 1 MSI GIC IRQ to another
  * MSI GIC IRQ to steer its MSI interrupt to correct X-Gene v1 core.  As a
  * consequence, the total MSI vectors that X-Gene v1 supports will be
  * reduced to 256 (2048/8) vectors.
@@ -247,7 +247,7 @@ static int xgene_allocate_domains(struct xgene_msi *msi)
 	if (!msi->inner_domain)
 		return -ENOMEM;
 
-	msi->msi_domain = pci_msi_create_irq_domain(of_node_to_fwnode(msi->node),
+	msi->msi_domain = pci_msi_create_irq_domain(of_fwnode_handle(msi->node),
 						    &xgene_msi_domain_info,
 						    msi->inner_domain);
 
@@ -518,7 +518,7 @@ static struct platform_driver xgene_msi_driver = {
 		.of_match_table = xgene_msi_match_table,
 	},
 	.probe = xgene_msi_probe,
-	.remove_new = xgene_msi_remove,
+	.remove = xgene_msi_remove,
 };
 
 static int __init xgene_pcie_msi_init(void)

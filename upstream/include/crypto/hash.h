@@ -10,7 +10,11 @@
 
 #include <linux/atomic.h>
 #include <linux/crypto.h>
+#include <linux/slab.h>
 #include <linux/string.h>
+
+/* Set this bit for virtual address instead of SG list. */
+#define CRYPTO_AHASH_REQ_VIRT	0x00000001
 
 struct crypto_ahash;
 
@@ -52,11 +56,11 @@ struct ahash_request {
 	struct crypto_async_request base;
 
 	unsigned int nbytes;
-	struct scatterlist *src;
+	union {
+		struct scatterlist *src;
+		const u8 *svirt;
+	};
 	u8 *result;
-
-	/* This field may only be used by the ahash API code. */
-	void *priv;
 
 	void *__ctx[] CRYPTO_MINALIGN_ATTR;
 };
@@ -132,6 +136,7 @@ struct ahash_request {
  *	      This is a counterpart to @init_tfm, used to remove
  *	      various changes set in @init_tfm.
  * @clone_tfm: Copy transform into new object, may allocate memory.
+ * @reqsize: Size of the request context.
  * @halg: see struct hash_alg_common
  */
 struct ahash_alg {
@@ -147,6 +152,8 @@ struct ahash_alg {
 	int (*init_tfm)(struct crypto_ahash *tfm);
 	void (*exit_tfm)(struct crypto_ahash *tfm);
 	int (*clone_tfm)(struct crypto_ahash *dst, struct crypto_ahash *src);
+
+	unsigned int reqsize;
 
 	struct hash_alg_common halg;
 };
@@ -580,12 +587,6 @@ static inline void ahash_request_free(struct ahash_request *req)
 	kfree_sensitive(req);
 }
 
-static inline void ahash_request_zero(struct ahash_request *req)
-{
-	memzero_explicit(req, sizeof(*req) +
-			      crypto_ahash_reqsize(crypto_ahash_reqtfm(req)));
-}
-
 static inline struct ahash_request *ahash_request_cast(
 	struct crypto_async_request *req)
 {
@@ -622,9 +623,14 @@ static inline void ahash_request_set_callback(struct ahash_request *req,
 					      crypto_completion_t compl,
 					      void *data)
 {
+	u32 keep = CRYPTO_AHASH_REQ_VIRT;
+
 	req->base.complete = compl;
 	req->base.data = data;
-	req->base.flags = flags;
+	flags &= ~keep;
+	req->base.flags &= keep;
+	req->base.flags |= flags;
+	crypto_reqchain_init(&req->base);
 }
 
 /**
@@ -647,6 +653,36 @@ static inline void ahash_request_set_crypt(struct ahash_request *req,
 	req->src = src;
 	req->nbytes = nbytes;
 	req->result = result;
+	req->base.flags &= ~CRYPTO_AHASH_REQ_VIRT;
+}
+
+/**
+ * ahash_request_set_virt() - set virtual address data buffers
+ * @req: ahash_request handle to be updated
+ * @src: source virtual address
+ * @result: buffer that is filled with the message digest -- the caller must
+ *	    ensure that the buffer has sufficient space by, for example, calling
+ *	    crypto_ahash_digestsize()
+ * @nbytes: number of bytes to process from the source virtual address
+ *
+ * By using this call, the caller references the source virtual address.
+ * The source virtual address points to the data the message digest is to
+ * be calculated for.
+ */
+static inline void ahash_request_set_virt(struct ahash_request *req,
+					  const u8 *src, u8 *result,
+					  unsigned int nbytes)
+{
+	req->svirt = src;
+	req->nbytes = nbytes;
+	req->result = result;
+	req->base.flags |= CRYPTO_AHASH_REQ_VIRT;
+}
+
+static inline void ahash_request_chain(struct ahash_request *req,
+				       struct ahash_request *head)
+{
+	crypto_request_chain(&req->base, &head->base);
 }
 
 /**
@@ -802,7 +838,7 @@ static inline void *shash_desc_ctx(struct shash_desc *desc)
  * cipher handle must point to a keyed message digest cipher in order for this
  * function to succeed.
  *
- * Context: Any context.
+ * Context: Softirq or process context.
  * Return: 0 if the setting of the key was successful; < 0 if an error occurred
  */
 int crypto_shash_setkey(struct crypto_shash *tfm, const u8 *key,
@@ -819,7 +855,7 @@ int crypto_shash_setkey(struct crypto_shash *tfm, const u8 *key,
  * crypto_shash_update and crypto_shash_final. The parameters have the same
  * meaning as discussed for those separate three functions.
  *
- * Context: Any context.
+ * Context: Softirq or process context.
  * Return: 0 if the message digest creation was successful; < 0 if an error
  *	   occurred
  */
@@ -839,7 +875,7 @@ int crypto_shash_digest(struct shash_desc *desc, const u8 *data,
  * directly, and it allocates a hash descriptor on the stack internally.
  * Note that this stack allocation may be fairly large.
  *
- * Context: Any context.
+ * Context: Softirq or process context.
  * Return: 0 on success; < 0 if an error occurred.
  */
 int crypto_shash_tfm_digest(struct crypto_shash *tfm, const u8 *data,
@@ -854,7 +890,7 @@ int crypto_shash_tfm_digest(struct crypto_shash *tfm, const u8 *data,
  * caller-allocated output buffer out which must have sufficient size (e.g. by
  * calling crypto_shash_descsize).
  *
- * Context: Any context.
+ * Context: Softirq or process context.
  * Return: 0 if the export creation was successful; < 0 if an error occurred
  */
 int crypto_shash_export(struct shash_desc *desc, void *out);
@@ -868,7 +904,7 @@ int crypto_shash_export(struct shash_desc *desc, void *out);
  * the input buffer. That buffer should have been generated with the
  * crypto_ahash_export function.
  *
- * Context: Any context.
+ * Context: Softirq or process context.
  * Return: 0 if the import was successful; < 0 if an error occurred
  */
 int crypto_shash_import(struct shash_desc *desc, const void *in);
@@ -881,7 +917,7 @@ int crypto_shash_import(struct shash_desc *desc, const void *in);
  * operational state handle. Any potentially existing state created by
  * previous operations is discarded.
  *
- * Context: Any context.
+ * Context: Softirq or process context.
  * Return: 0 if the message digest initialization was successful; < 0 if an
  *	   error occurred
  */
@@ -903,7 +939,7 @@ static inline int crypto_shash_init(struct shash_desc *desc)
  *
  * Updates the message digest state of the operational state handle.
  *
- * Context: Any context.
+ * Context: Softirq or process context.
  * Return: 0 if the message digest update was successful; < 0 if an error
  *	   occurred
  */
@@ -920,7 +956,7 @@ int crypto_shash_update(struct shash_desc *desc, const u8 *data,
  * into the output buffer. The caller must ensure that the output buffer is
  * large enough by using crypto_shash_digestsize.
  *
- * Context: Any context.
+ * Context: Softirq or process context.
  * Return: 0 if the message digest creation was successful; < 0 if an error
  *	   occurred
  */
@@ -937,7 +973,7 @@ int crypto_shash_final(struct shash_desc *desc, u8 *out);
  * crypto_shash_update and crypto_shash_final. The parameters have the same
  * meaning as discussed for those separate functions.
  *
- * Context: Any context.
+ * Context: Softirq or process context.
  * Return: 0 if the message digest creation was successful; < 0 if an error
  *	   occurred
  */
@@ -948,6 +984,16 @@ static inline void shash_desc_zero(struct shash_desc *desc)
 {
 	memzero_explicit(desc,
 			 sizeof(*desc) + crypto_shash_descsize(desc->tfm));
+}
+
+static inline int ahash_request_err(struct ahash_request *req)
+{
+	return req->base.err;
+}
+
+static inline bool ahash_is_async(struct crypto_ahash *tfm)
+{
+	return crypto_tfm_is_async(&tfm->base);
 }
 
 #endif	/* _CRYPTO_HASH_H */

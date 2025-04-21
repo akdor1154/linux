@@ -23,7 +23,6 @@
 #include <linux/vmalloc.h>
 #include <linux/mm.h>
 #include <linux/clockchips.h>
-#include <linux/hyperv.h>
 #include <linux/slab.h>
 #include <linux/cpuhotplug.h>
 #include <asm/hypervisor.h>
@@ -38,7 +37,7 @@ static u64 hv_apic_icr_read(void)
 {
 	u64 reg_val;
 
-	rdmsrl(HV_X64_MSR_ICR, reg_val);
+	rdmsrq(HV_X64_MSR_ICR, reg_val);
 	return reg_val;
 }
 
@@ -50,7 +49,7 @@ static void hv_apic_icr_write(u32 low, u32 id)
 	reg_val = reg_val << 32;
 	reg_val |= low;
 
-	wrmsrl(HV_X64_MSR_ICR, reg_val);
+	wrmsrq(HV_X64_MSR_ICR, reg_val);
 }
 
 static u32 hv_apic_read(u32 reg)
@@ -146,6 +145,11 @@ static bool __send_ipi_mask_ex(const struct cpumask *mask, int vector,
 		ipi_arg->vp_set.format = HV_GENERIC_SET_ALL;
 	}
 
+	/*
+	 * For this hypercall, Hyper-V treats the valid_bank_mask field
+	 * of ipi_arg->vp_set as part of the fixed size input header.
+	 * So the variable input header size is equal to nr_bank.
+	 */
 	status = hv_do_rep_hypercall(HVCALL_SEND_IPI_EX, 0, nr_bank,
 				     ipi_arg, NULL);
 

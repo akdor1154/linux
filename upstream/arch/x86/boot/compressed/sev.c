@@ -126,20 +126,25 @@ static bool fault_in_kernel_space(unsigned long address)
 #include "../../lib/inat.c"
 #include "../../lib/insn.c"
 
-/* Include code for early handlers */
-#include "../../coco/sev/shared.c"
+extern struct svsm_ca *boot_svsm_caa;
+extern u64 boot_svsm_caa_pa;
 
-static struct svsm_ca *svsm_get_caa(void)
+struct svsm_ca *svsm_get_caa(void)
 {
 	return boot_svsm_caa;
 }
 
-static u64 svsm_get_caa_pa(void)
+u64 svsm_get_caa_pa(void)
 {
 	return boot_svsm_caa_pa;
 }
 
-static int svsm_perform_call_protocol(struct svsm_call *call)
+int svsm_perform_call_protocol(struct svsm_call *call);
+
+/* Include code for early handlers */
+#include "../../coco/sev/shared.c"
+
+int svsm_perform_call_protocol(struct svsm_call *call)
 {
 	struct ghcb *ghcb;
 	int ret;
@@ -401,7 +406,8 @@ finish:
  * by the guest kernel. As and when a new feature is implemented in the
  * guest kernel, a corresponding bit should be added to the mask.
  */
-#define SNP_FEATURES_PRESENT	MSR_AMD64_SNP_DEBUG_SWAP
+#define SNP_FEATURES_PRESENT	(MSR_AMD64_SNP_DEBUG_SWAP |	\
+				 MSR_AMD64_SNP_SECURE_TSC)
 
 u64 snp_get_unsupported_features(u64 status)
 {

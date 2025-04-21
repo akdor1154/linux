@@ -330,7 +330,7 @@ void avic_ring_doorbell(struct kvm_vcpu *vcpu)
 	int cpu = READ_ONCE(vcpu->cpu);
 
 	if (cpu != get_cpu()) {
-		wrmsrl(MSR_AMD64_SVM_AVIC_DOORBELL, kvm_cpu_get_apicid(cpu));
+		wrmsrq(MSR_AMD64_SVM_AVIC_DOORBELL, kvm_cpu_get_apicid(cpu));
 		trace_kvm_avic_doorbell(vcpu->vcpu_id, kvm_cpu_get_apicid(cpu));
 	}
 	put_cpu();
@@ -1196,6 +1196,12 @@ bool avic_hardware_setup(void)
 			pr_warn(FW_BUG "Cannot support x2AVIC due to AVIC is disabled");
 			pr_warn(FW_BUG "Try enable AVIC using force_avic option");
 		}
+		return false;
+	}
+
+	if (cc_platform_has(CC_ATTR_HOST_SEV_SNP) &&
+	    !boot_cpu_has(X86_FEATURE_HV_INUSE_WR_ALLOWED)) {
+		pr_warn("AVIC disabled: missing HvInUseWrAllowed on SNP-enabled system\n");
 		return false;
 	}
 

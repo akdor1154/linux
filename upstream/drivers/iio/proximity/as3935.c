@@ -63,7 +63,7 @@ struct as3935_state {
 	/* Ensure timestamp is naturally aligned */
 	struct {
 		u8 chan;
-		s64 timestamp __aligned(8);
+		aligned_s64 timestamp;
 	} scan;
 	u8 buf[2] __aligned(IIO_DMA_MINALIGN);
 };
@@ -444,13 +444,13 @@ static int as3935_probe(struct spi_device *spi)
 
 static const struct of_device_id as3935_of_match[] = {
 	{ .compatible = "ams,as3935", },
-	{ /* sentinel */ },
+	{ }
 };
 MODULE_DEVICE_TABLE(of, as3935_of_match);
 
 static const struct spi_device_id as3935_id[] = {
 	{"as3935", 0},
-	{},
+	{ }
 };
 MODULE_DEVICE_TABLE(spi, as3935_id);
 

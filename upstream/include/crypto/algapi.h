@@ -11,6 +11,7 @@
 #include <linux/align.h>
 #include <linux/cache.h>
 #include <linux/crypto.h>
+#include <linux/list.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
 
@@ -53,20 +54,7 @@ struct rtattr;
 struct scatterlist;
 struct seq_file;
 struct sk_buff;
-
-struct crypto_type {
-	unsigned int (*ctxsize)(struct crypto_alg *alg, u32 type, u32 mask);
-	unsigned int (*extsize)(struct crypto_alg *alg);
-	int (*init_tfm)(struct crypto_tfm *tfm);
-	void (*show)(struct seq_file *m, struct crypto_alg *alg);
-	int (*report)(struct sk_buff *skb, struct crypto_alg *alg);
-	void (*free)(struct crypto_instance *inst);
-
-	unsigned int type;
-	unsigned int maskclear;
-	unsigned int maskset;
-	unsigned int tfmsize;
-};
+union crypto_no_such_thing;
 
 struct crypto_instance {
 	struct crypto_alg alg;
@@ -80,15 +68,16 @@ struct crypto_instance {
 		struct crypto_spawn *spawns;
 	};
 
-	struct work_struct free_work;
-
 	void *__ctx[] CRYPTO_MINALIGN_ATTR;
 };
 
 struct crypto_template {
 	struct list_head list;
 	struct hlist_head instances;
+	struct hlist_head dead;
 	struct module *module;
+
+	struct work_struct free_work;
 
 	int (*create)(struct crypto_template *tmpl, struct rtattr **tb);
 
@@ -119,6 +108,13 @@ struct crypto_queue {
 };
 
 struct scatter_walk {
+	/* Must be the first member, see struct skcipher_walk. */
+	union {
+		void *const addr;
+
+		/* Private API field, do not touch. */
+		union crypto_no_such_thing *__addr;
+	};
 	struct scatterlist *sg;
 	unsigned int offset;
 };
@@ -269,6 +265,16 @@ static inline void crypto_request_complete(struct crypto_async_request *req,
 static inline u32 crypto_tfm_alg_type(struct crypto_tfm *tfm)
 {
 	return tfm->__crt_alg->cra_flags & CRYPTO_ALG_TYPE_MASK;
+}
+
+static inline bool crypto_request_chained(struct crypto_async_request *req)
+{
+	return !list_empty(&req->list);
+}
+
+static inline bool crypto_tfm_req_chain(struct crypto_tfm *tfm)
+{
+	return tfm->__crt_alg->cra_flags & CRYPTO_ALG_REQ_CHAIN;
 }
 
 #endif	/* _CRYPTO_ALGAPI_H */

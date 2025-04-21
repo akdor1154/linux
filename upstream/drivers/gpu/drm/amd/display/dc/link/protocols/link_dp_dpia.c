@@ -59,11 +59,17 @@ enum dc_status dpcd_get_tunneling_device_data(struct dc_link *link)
 			dpcd_dp_tun_data,
 			sizeof(dpcd_dp_tun_data));
 
+	if (status != DC_OK)
+		goto err;
+
 	status = core_link_read_dpcd(
 			link,
 			DP_USB4_ROUTER_TOPOLOGY_ID,
 			dpcd_topology_data,
 			sizeof(dpcd_topology_data));
+
+	if (status != DC_OK)
+		goto err;
 
 	link->dpcd_caps.usb4_dp_tun_info.dp_tun_cap.raw =
 			dpcd_dp_tun_data[DP_TUNNELING_CAPABILITIES_SUPPORT - DP_TUNNELING_CAPABILITIES_SUPPORT];
@@ -75,6 +81,7 @@ enum dc_status dpcd_get_tunneling_device_data(struct dc_link *link)
 	for (i = 0; i < DPCD_USB4_TOPOLOGY_ID_LEN; i++)
 		link->dpcd_caps.usb4_dp_tun_info.usb4_topology_id[i] = dpcd_topology_data[i];
 
+err:
 	return status;
 }
 
@@ -85,6 +92,7 @@ bool dpia_query_hpd_status(struct dc_link *link)
 
 	/* prepare QUERY_HPD command */
 	cmd.query_hpd.header.type = DMUB_CMD__QUERY_HPD_STATE;
+	cmd.query_hpd.header.payload_bytes = sizeof(cmd.query_hpd.data);
 	cmd.query_hpd.data.instance = link->link_id.enum_id - ENUM_ID_1;
 	cmd.query_hpd.data.ch_type = AUX_CHANNEL_DPIA;
 

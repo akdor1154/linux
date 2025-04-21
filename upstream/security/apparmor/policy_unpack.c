@@ -29,6 +29,7 @@
 #include "include/policy.h"
 #include "include/policy_unpack.h"
 #include "include/policy_compat.h"
+#include "include/signal.h"
 
 /* audit callback for unpack fields */
 static void audit_cb(struct audit_buffer *ab, void *va)
@@ -645,10 +646,13 @@ fail:
 
 static bool unpack_perm(struct aa_ext *e, u32 version, struct aa_perms *perm)
 {
+	u32 reserved;
+
 	if (version != 1)
 		return false;
 
-	return	aa_unpack_u32(e, &perm->allow, NULL) &&
+	/* reserved entry is for later expansion, discard for now */
+	return	aa_unpack_u32(e, &reserved, NULL) &&
 		aa_unpack_u32(e, &perm->allow, NULL) &&
 		aa_unpack_u32(e, &perm->deny, NULL) &&
 		aa_unpack_u32(e, &perm->subtree, NULL) &&
@@ -713,6 +717,7 @@ static int unpack_pdb(struct aa_ext *e, struct aa_policydb **policy,
 	void *pos = e->pos;
 	int i, flags, error = -EPROTO;
 	ssize_t size;
+	u32 version = 0;
 
 	pdb = aa_alloc_pdb(GFP_KERNEL);
 	if (!pdb)
@@ -730,6 +735,9 @@ static int unpack_pdb(struct aa_ext *e, struct aa_policydb **policy,
 	if (pdb->perms) {
 		/* perms table present accept is index */
 		flags = TO_ACCEPT1_FLAG(YYTD_DATA32);
+		if (aa_unpack_u32(e, &version, "permsv") && version > 2)
+			/* accept2 used for dfa flags */
+			flags |= TO_ACCEPT2_FLAG(YYTD_DATA32);
 	} else {
 		/* packed perms in accept1 and accept2 */
 		flags = TO_ACCEPT1_FLAG(YYTD_DATA32) |
@@ -767,6 +775,20 @@ static int unpack_pdb(struct aa_ext *e, struct aa_policydb **policy,
 		}
 	}
 
+	if (pdb->perms && version <= 2) {
+		/* add dfa flags table missing in v2 */
+		u32 noents = pdb->dfa->tables[YYTD_ID_ACCEPT]->td_lolen;
+		u16 tdflags = pdb->dfa->tables[YYTD_ID_ACCEPT]->td_flags;
+		size_t tsize = table_size(noents, tdflags);
+
+		pdb->dfa->tables[YYTD_ID_ACCEPT2] = kvzalloc(tsize, GFP_KERNEL);
+		if (!pdb->dfa->tables[YYTD_ID_ACCEPT2]) {
+			*info = "failed to alloc dfa flags table";
+			goto out;
+		}
+		pdb->dfa->tables[YYTD_ID_ACCEPT2]->td_lolen = noents;
+		pdb->dfa->tables[YYTD_ID_ACCEPT2]->td_flags = tdflags;
+	}
 	/*
 	 * Unfortunately due to a bug in earlier userspaces, a
 	 * transition table may be present even when the dfa is
@@ -782,7 +804,7 @@ static int unpack_pdb(struct aa_ext *e, struct aa_policydb **policy,
 
 	/* TODO: move compat mapping here, requires dfa merging first */
 	/* TODO: move verify here, it has to be done after compat mappings */
-
+out:
 	*policy = pdb;
 	return 0;
 
@@ -895,6 +917,12 @@ static struct aa_profile *unpack_profile(struct aa_ext *e, char **ns_name)
 	(void) aa_unpack_strdup(e, &disconnected, "disconnected");
 	profile->disconnected = disconnected;
 
+	/* optional */
+	(void) aa_unpack_u32(e, &profile->signal, "kill");
+	if (profile->signal < 1 && profile->signal > MAXMAPPED_SIG) {
+		info = "profile kill.signal invalid value";
+		goto fail;
+	}
 	/* per profile debug flags (complain, audit) */
 	if (!aa_unpack_nameX(e, AA_STRUCT, "flags")) {
 		info = "profile missing flags";
@@ -1097,6 +1125,8 @@ static struct aa_profile *unpack_profile(struct aa_ext *e, char **ns_name)
 		info = "failed to unpack end of profile";
 		goto fail;
 	}
+
+	aa_compute_profile_mediates(profile);
 
 	return profile;
 

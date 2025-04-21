@@ -271,7 +271,6 @@ static bool ovl_fill_merge(struct dir_context *ctx, const char *name,
 static int ovl_check_whiteouts(const struct path *path, struct ovl_readdir_data *rdd)
 {
 	int err;
-	struct ovl_cache_entry *p;
 	struct dentry *dentry, *dir = path->dentry;
 	const struct cred *old_cred;
 
@@ -280,9 +279,11 @@ static int ovl_check_whiteouts(const struct path *path, struct ovl_readdir_data 
 	err = down_write_killable(&dir->d_inode->i_rwsem);
 	if (!err) {
 		while (rdd->first_maybe_whiteout) {
-			p = rdd->first_maybe_whiteout;
+			struct ovl_cache_entry *p =
+				rdd->first_maybe_whiteout;
 			rdd->first_maybe_whiteout = p->next_maybe_whiteout;
-			dentry = lookup_one(mnt_idmap(path->mnt), p->name, dir, p->len);
+			dentry = lookup_one(mnt_idmap(path->mnt),
+					    &QSTR_LEN(p->name, p->len), dir);
 			if (!IS_ERR(dentry)) {
 				p->is_whiteout = ovl_is_whiteout(dentry);
 				dput(dentry);
@@ -290,7 +291,7 @@ static int ovl_check_whiteouts(const struct path *path, struct ovl_readdir_data 
 		}
 		inode_unlock(dir->d_inode);
 	}
-	revert_creds(old_cred);
+	ovl_revert_creds(old_cred);
 
 	return err;
 }
@@ -492,7 +493,7 @@ static int ovl_cache_update(const struct path *path, struct ovl_cache_entry *p, 
 		}
 	}
 	/* This checks also for xwhiteouts */
-	this = lookup_one(mnt_idmap(path->mnt), p->name, dir, p->len);
+	this = lookup_one(mnt_idmap(path->mnt), &QSTR_LEN(p->name, p->len), dir);
 	if (IS_ERR_OR_NULL(this) || !this->d_inode) {
 		/* Mark a stale entry */
 		p->is_whiteout = true;
@@ -808,7 +809,7 @@ static int ovl_iterate(struct file *file, struct dir_context *ctx)
 	}
 	err = 0;
 out:
-	revert_creds(old_cred);
+	ovl_revert_creds(old_cred);
 	return err;
 }
 
@@ -860,7 +861,7 @@ static struct file *ovl_dir_open_realfile(const struct file *file,
 
 	old_cred = ovl_override_creds(file_inode(file)->i_sb);
 	res = ovl_path_open(realpath, O_RDONLY | (file->f_flags & O_LARGEFILE));
-	revert_creds(old_cred);
+	ovl_revert_creds(old_cred);
 
 	return res;
 }
@@ -987,7 +988,7 @@ int ovl_check_empty_dir(struct dentry *dentry, struct list_head *list)
 
 	old_cred = ovl_override_creds(dentry->d_sb);
 	err = ovl_dir_read_merged(dentry, list, &root);
-	revert_creds(old_cred);
+	ovl_revert_creds(old_cred);
 	if (err)
 		return err;
 

@@ -23,6 +23,8 @@
 #include <linux/platform_data/cros_ec_sensorhub.h>
 #include <linux/platform_device.h>
 
+#include "cros_ec_sensors_trace.h"
+
 /*
  * Hard coded to the first device to support sensor fifo.  The EC has a 2048
  * byte fifo and will trigger an interrupt when fifo is 2/3 full.
@@ -32,25 +34,19 @@
 static int cros_ec_get_host_cmd_version_mask(struct cros_ec_device *ec_dev,
 					     u16 cmd_offset, u16 cmd, u32 *mask)
 {
+	DEFINE_RAW_FLEX(struct cros_ec_command, buf, data,
+			MAX(sizeof(struct ec_response_get_cmd_versions),
+			    sizeof(struct ec_params_get_cmd_versions)));
 	int ret;
-	struct {
-		struct cros_ec_command msg;
-		union {
-			struct ec_params_get_cmd_versions params;
-			struct ec_response_get_cmd_versions resp;
-		};
-	} __packed buf = {
-		.msg = {
-			.command = EC_CMD_GET_CMD_VERSIONS + cmd_offset,
-			.insize = sizeof(struct ec_response_get_cmd_versions),
-			.outsize = sizeof(struct ec_params_get_cmd_versions)
-			},
-		.params = {.cmd = cmd}
-	};
 
-	ret = cros_ec_cmd_xfer_status(ec_dev, &buf.msg);
+	buf->command = EC_CMD_GET_CMD_VERSIONS + cmd_offset;
+	buf->insize = sizeof(struct ec_response_get_cmd_versions);
+	buf->outsize = sizeof(struct ec_params_get_cmd_versions);
+	((struct ec_params_get_cmd_versions *)buf->data)->cmd = cmd;
+
+	ret = cros_ec_cmd_xfer_status(ec_dev, buf);
 	if (ret >= 0)
-		*mask = buf.resp.version_mask;
+		*mask = ((struct ec_response_get_cmd_versions *)buf->data)->version_mask;
 	return ret;
 }
 
@@ -413,6 +409,7 @@ EXPORT_SYMBOL_GPL(cros_ec_sensors_core_register);
 int cros_ec_motion_send_host_cmd(struct cros_ec_sensors_core_state *state,
 				 u16 opt_length)
 {
+	struct ec_response_motion_sense *resp = (struct ec_response_motion_sense *)state->msg->data;
 	int ret;
 
 	if (opt_length)
@@ -423,12 +420,12 @@ int cros_ec_motion_send_host_cmd(struct cros_ec_sensors_core_state *state,
 	memcpy(state->msg->data, &state->param, sizeof(state->param));
 
 	ret = cros_ec_cmd_xfer_status(state->ec, state->msg);
+	trace_cros_ec_motion_host_cmd(&state->param, resp, ret);
 	if (ret < 0)
 		return ret;
 
-	if (ret &&
-	    state->resp != (struct ec_response_motion_sense *)state->msg->data)
-		memcpy(state->resp, state->msg->data, ret);
+	if (ret && state->resp != resp)
+		memcpy(state->resp, resp, ret);
 
 	return 0;
 }
@@ -483,7 +480,7 @@ const struct iio_chan_spec_ext_info cros_ec_sensors_ext_info[] = {
 		.shared = IIO_SHARED_BY_ALL,
 		.read = cros_ec_sensors_id
 	},
-	{ },
+	{ }
 };
 EXPORT_SYMBOL_GPL(cros_ec_sensors_ext_info);
 

@@ -1367,7 +1367,7 @@ static int dsa_switch_parse_of(struct dsa_switch *ds, struct device_node *dn)
 	return dsa_switch_parse_ports_of(ds, dn);
 }
 
-static int dev_is_class(struct device *dev, void *class)
+static int dev_is_class(struct device *dev, const void *class)
 {
 	if (dev->class != NULL && !strcmp(dev->class->name, class))
 		return 1;
@@ -1504,14 +1504,6 @@ static int dsa_switch_probe(struct dsa_switch *ds)
 
 	if (!ds->num_ports)
 		return -EINVAL;
-
-	if (ds->phylink_mac_ops) {
-		if (ds->ops->phylink_mac_select_pcs ||
-		    ds->ops->phylink_mac_config ||
-		    ds->ops->phylink_mac_link_down ||
-		    ds->ops->phylink_mac_link_up)
-			return -EINVAL;
-	}
 
 	if (np) {
 		err = dsa_switch_parse_of(ds, np);

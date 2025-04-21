@@ -20,6 +20,7 @@ static const struct x86_cpu_id ifs_cpu_ids[] __initconst = {
 	X86_MATCH(INTEL_GRANITERAPIDS_X, ARRAY_GEN0),
 	X86_MATCH(INTEL_GRANITERAPIDS_D, ARRAY_GEN0),
 	X86_MATCH(INTEL_ATOM_CRESTMONT_X, ARRAY_GEN1),
+	X86_MATCH(INTEL_ATOM_DARKMONT_X, ARRAY_GEN1),
 	{}
 };
 MODULE_DEVICE_TABLE(x86cpu, ifs_cpu_ids);
@@ -114,13 +115,13 @@ static int __init ifs_init(void)
 	if (!m)
 		return -ENODEV;
 
-	if (rdmsrl_safe(MSR_IA32_CORE_CAPS, &msrval))
+	if (rdmsrq_safe(MSR_IA32_CORE_CAPS, &msrval))
 		return -ENODEV;
 
 	if (!(msrval & MSR_IA32_CORE_CAPS_INTEGRITY_CAPS))
 		return -ENODEV;
 
-	if (rdmsrl_safe(MSR_INTEGRITY_CAPS, &msrval))
+	if (rdmsrq_safe(MSR_INTEGRITY_CAPS, &msrval))
 		return -ENODEV;
 
 	ifs_pkg_auth = kmalloc_array(topology_max_packages(), sizeof(bool), GFP_KERNEL);

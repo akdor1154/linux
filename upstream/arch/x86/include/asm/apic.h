@@ -99,8 +99,8 @@ static inline void native_apic_mem_write(u32 reg, u32 v)
 	volatile u32 *addr = (volatile u32 *)(APIC_BASE + reg);
 
 	alternative_io("movl %0, %1", "xchgl %0, %1", X86_BUG_11AP,
-		       ASM_OUTPUT2("=r" (v), "=m" (*addr)),
-		       ASM_OUTPUT2("0" (v), "m" (*addr)));
+		       ASM_OUTPUT("=r" (v), "=m" (*addr)),
+		       ASM_INPUT("0" (v), "m" (*addr)));
 }
 
 static inline u32 native_apic_mem_read(u32 reg)
@@ -120,7 +120,7 @@ static inline bool apic_is_x2apic_enabled(void)
 {
 	u64 msr;
 
-	if (rdmsrl_safe(MSR_IA32_APICBASE, &msr))
+	if (rdmsrq_safe(MSR_IA32_APICBASE, &msr))
 		return false;
 	return msr & X2APIC_ENABLE;
 }
@@ -224,20 +224,20 @@ static inline u32 native_apic_msr_read(u32 reg)
 	if (reg == APIC_DFR)
 		return -1;
 
-	rdmsrl(APIC_BASE_MSR + (reg >> 4), msr);
+	rdmsrq(APIC_BASE_MSR + (reg >> 4), msr);
 	return (u32)msr;
 }
 
 static inline void native_x2apic_icr_write(u32 low, u32 id)
 {
-	wrmsrl(APIC_BASE_MSR + (APIC_ICR >> 4), ((__u64) id) << 32 | low);
+	wrmsrq(APIC_BASE_MSR + (APIC_ICR >> 4), ((__u64) id) << 32 | low);
 }
 
 static inline u64 native_x2apic_icr_read(void)
 {
 	unsigned long val;
 
-	rdmsrl(APIC_BASE_MSR + (APIC_ICR >> 4), val);
+	rdmsrq(APIC_BASE_MSR + (APIC_ICR >> 4), val);
 	return val;
 }
 

@@ -81,14 +81,14 @@ static int __init tcc_cooling_init(void)
 	if (!id)
 		return -ENODEV;
 
-	err = rdmsrl_safe(MSR_PLATFORM_INFO, &val);
+	err = rdmsrq_safe(MSR_PLATFORM_INFO, &val);
 	if (err)
 		return err;
 
 	if (!(val & TCC_PROGRAMMABLE))
 		return -ENODEV;
 
-	err = rdmsrl_safe(MSR_IA32_TEMPERATURE_TARGET, &val);
+	err = rdmsrq_safe(MSR_IA32_TEMPERATURE_TARGET, &val);
 	if (err)
 		return err;
 
@@ -118,7 +118,7 @@ static void __exit tcc_cooling_exit(void)
 
 module_exit(tcc_cooling_exit)
 
-MODULE_IMPORT_NS(INTEL_TCC);
+MODULE_IMPORT_NS("INTEL_TCC");
 MODULE_DESCRIPTION("TCC offset cooling device Driver");
 MODULE_AUTHOR("Zhang Rui <rui.zhang@intel.com>");
 MODULE_LICENSE("GPL v2");

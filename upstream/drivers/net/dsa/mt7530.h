@@ -248,6 +248,18 @@ enum mt7530_vlan_egress_attr {
 #define  AGE_UNIT_MAX			0xfff
 #define  AGE_UNIT(x)			(AGE_UNIT_MASK & (x))
 
+#define MT753X_ERLCR_P(x)		(0x1040 + ((x) * 0x100))
+#define  ERLCR_CIR_MASK			GENMASK(31, 16)
+#define  ERLCR_EN_MASK			BIT(15)
+#define  ERLCR_EXP_MASK			GENMASK(11, 8)
+#define  ERLCR_TBF_MODE_MASK		BIT(7)
+#define  ERLCR_MANT_MASK		GENMASK(6, 0)
+
+#define MT753X_GERLCR			0x10e0
+#define  EGR_BC_MASK			GENMASK(7, 0)
+#define  EGR_BC_CRC			0x4	/* crc */
+#define  EGR_BC_CRC_IPG_PREAMBLE	0x18	/* crc + ipg + preamble */
+
 /* Register for port STP state control */
 #define MT7530_SSP_P(x)			(0x2000 + ((x) * 0x100))
 #define  FID_PST(fid, state)		(((state) & 0x3) << ((fid) * 2))
@@ -411,6 +423,48 @@ enum mt7530_vlan_port_acc_frm {
 
 /* Register for MIB */
 #define MT7530_PORT_MIB_COUNTER(x)	(0x4000 + (x) * 0x100)
+/* Each define is an offset of MT7530_PORT_MIB_COUNTER */
+#define   MT7530_PORT_MIB_TX_DROP	0x00
+#define   MT7530_PORT_MIB_TX_CRC_ERR	0x04
+#define   MT7530_PORT_MIB_TX_UNICAST	0x08
+#define   MT7530_PORT_MIB_TX_MULTICAST	0x0c
+#define   MT7530_PORT_MIB_TX_BROADCAST	0x10
+#define   MT7530_PORT_MIB_TX_COLLISION	0x14
+#define   MT7530_PORT_MIB_TX_SINGLE_COLLISION 0x18
+#define   MT7530_PORT_MIB_TX_MULTIPLE_COLLISION 0x1c
+#define   MT7530_PORT_MIB_TX_DEFERRED	0x20
+#define   MT7530_PORT_MIB_TX_LATE_COLLISION 0x24
+#define   MT7530_PORT_MIB_TX_EXCESSIVE_COLLISION 0x28
+#define   MT7530_PORT_MIB_TX_PAUSE	0x2c
+#define   MT7530_PORT_MIB_TX_PKT_SZ_64	0x30
+#define   MT7530_PORT_MIB_TX_PKT_SZ_65_TO_127 0x34
+#define   MT7530_PORT_MIB_TX_PKT_SZ_128_TO_255 0x38
+#define   MT7530_PORT_MIB_TX_PKT_SZ_256_TO_511 0x3c
+#define   MT7530_PORT_MIB_TX_PKT_SZ_512_TO_1023 0x40
+#define   MT7530_PORT_MIB_TX_PKT_SZ_1024_TO_MAX 0x44
+#define   MT7530_PORT_MIB_TX_BYTES	0x48 /* 64 bytes */
+#define   MT7530_PORT_MIB_RX_DROP	0x60
+#define   MT7530_PORT_MIB_RX_FILTERING	0x64
+#define   MT7530_PORT_MIB_RX_UNICAST	0x68
+#define   MT7530_PORT_MIB_RX_MULTICAST	0x6c
+#define   MT7530_PORT_MIB_RX_BROADCAST	0x70
+#define   MT7530_PORT_MIB_RX_ALIGN_ERR	0x74
+#define   MT7530_PORT_MIB_RX_CRC_ERR	0x78
+#define   MT7530_PORT_MIB_RX_UNDER_SIZE_ERR 0x7c
+#define   MT7530_PORT_MIB_RX_FRAG_ERR	0x80
+#define   MT7530_PORT_MIB_RX_OVER_SZ_ERR 0x84
+#define   MT7530_PORT_MIB_RX_JABBER_ERR	0x88
+#define   MT7530_PORT_MIB_RX_PAUSE	0x8c
+#define   MT7530_PORT_MIB_RX_PKT_SZ_64	0x90
+#define   MT7530_PORT_MIB_RX_PKT_SZ_65_TO_127 0x94
+#define   MT7530_PORT_MIB_RX_PKT_SZ_128_TO_255 0x98
+#define   MT7530_PORT_MIB_RX_PKT_SZ_256_TO_511 0x9c
+#define   MT7530_PORT_MIB_RX_PKT_SZ_512_TO_1023 0xa0
+#define   MT7530_PORT_MIB_RX_PKT_SZ_1024_TO_MAX 0xa4
+#define   MT7530_PORT_MIB_RX_BYTES	0xa8 /* 64 bytes */
+#define   MT7530_PORT_MIB_RX_CTRL_DROP	0xb0
+#define   MT7530_PORT_MIB_RX_INGRESS_DROP 0xb4
+#define   MT7530_PORT_MIB_RX_ARL_DROP	0xb8
 #define MT7530_MIB_CCR			0x4fe0
 #define  CCR_MIB_ENABLE			BIT(31)
 #define  CCR_RX_OCT_CNT_GOOD		BIT(7)
@@ -615,6 +669,10 @@ enum mt7531_xtal_fsel {
 #define  MT7531_GPIO12_RG_RXD3_MASK	GENMASK(19, 16)
 #define  MT7531_EXT_P_MDIO_12		(2 << 16)
 
+#define MT753X_CPORT_SPTAG_CFG		0x7c10
+#define  CPORT_SW2FE_STAG_EN		BIT(1)
+#define  CPORT_FE2SW_STAG_EN		BIT(0)
+
 /* Registers for LED GPIO control (MT7530 only)
  * All registers follow this pattern:
  * [ 2: 0]  port 0
@@ -803,9 +861,7 @@ struct mt753x_info {
  * @p5_mode:		Holding the current mode of port 5 of the MT7530 switch
  * @p5_sgmii:		Flag for distinguishing if port 5 of the MT7531 switch
  *			has got SGMII
- * @irq:		IRQ number of the switch
  * @irq_domain:		IRQ domain of the switch irq_chip
- * @irq_enable:		IRQ enable bits, synced to SYS_INT_EN
  * @create_sgmii:	Pointer to function creating SGMII PCS instance(s)
  * @active_cpu_ports:	Holding the active CPU ports
  * @mdiodev:		The pointer to the MDIO device structure
@@ -830,9 +886,7 @@ struct mt7530_priv {
 	struct mt753x_pcs	pcs[MT7530_NUM_PORTS];
 	/* protect among processes for registers access*/
 	struct mutex reg_mutex;
-	int irq;
 	struct irq_domain *irq_domain;
-	u32 irq_enable;
 	int (*create_sgmii)(struct mt7530_priv *priv);
 	u8 active_cpu_ports;
 	struct mdio_device *mdiodev;

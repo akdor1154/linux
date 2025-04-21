@@ -18,6 +18,10 @@ struct swsusp_info {
 	unsigned long		size;
 } __aligned(PAGE_SIZE);
 
+#if defined(CONFIG_SUSPEND) || defined(CONFIG_HIBERNATION)
+extern bool filesystem_freeze_enabled;
+#endif
+
 #ifdef CONFIG_HIBERNATION
 /* kernel/power/snapshot.c */
 extern void __init hibernate_reserved_size_init(void);
@@ -110,7 +114,7 @@ extern int hibernate_preallocate_memory(void);
 
 extern void clear_or_poison_free_pages(void);
 
-/**
+/*
  *	Auxiliary structure used for reading the snapshot image data and
  *	metadata from and writing them to the list of page backup entries
  *	(PBEs) which is the main data structure of swsusp.

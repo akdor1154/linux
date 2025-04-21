@@ -85,11 +85,6 @@ struct panthor_gem_object *to_panthor_bo(struct drm_gem_object *obj)
 
 struct drm_gem_object *panthor_gem_create_object(struct drm_device *ddev, size_t size);
 
-struct drm_gem_object *
-panthor_gem_prime_import_sg_table(struct drm_device *ddev,
-				  struct dma_buf_attachment *attach,
-				  struct sg_table *sgt);
-
 int
 panthor_gem_create_with_handle(struct drm_file *file,
 			       struct drm_device *ddev,
@@ -117,7 +112,7 @@ panthor_kernel_bo_vmap(struct panthor_kernel_bo *bo)
 	if (bo->kmap)
 		return 0;
 
-	ret = drm_gem_vmap_unlocked(bo->obj, &map);
+	ret = drm_gem_vmap(bo->obj, &map);
 	if (ret)
 		return ret;
 
@@ -131,7 +126,7 @@ panthor_kernel_bo_vunmap(struct panthor_kernel_bo *bo)
 	if (bo->kmap) {
 		struct iosys_map map = IOSYS_MAP_INIT_VADDR(bo->kmap);
 
-		drm_gem_vunmap_unlocked(bo->obj, &map);
+		drm_gem_vunmap(bo->obj, &map);
 		bo->kmap = NULL;
 	}
 }

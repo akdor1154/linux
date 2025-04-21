@@ -9,6 +9,7 @@
 #include <linux/kernel.h>
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
+#include <linux/types.h>
 #include <linux/spi/spi.h>
 
 #include <linux/iio/buffer.h>
@@ -65,7 +66,7 @@ struct bma220_data {
 	struct {
 		s8 chans[3];
 		/* Ensure timestamp is naturally aligned. */
-		s64 timestamp __aligned(8);
+		aligned_s64 timestamp;
 	} scan;
 	u8 tx_buf[2] __aligned(IIO_DMA_MINALIGN);
 };
@@ -306,12 +307,12 @@ static DEFINE_SIMPLE_DEV_PM_OPS(bma220_pm_ops, bma220_suspend, bma220_resume);
 
 static const struct spi_device_id bma220_spi_id[] = {
 	{"bma220", 0},
-	{}
+	{ }
 };
 
 static const struct acpi_device_id bma220_acpi_id[] = {
 	{"BMA0220", 0},
-	{}
+	{ }
 };
 MODULE_DEVICE_TABLE(spi, bma220_spi_id);
 

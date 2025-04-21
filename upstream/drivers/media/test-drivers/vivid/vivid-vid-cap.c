@@ -10,6 +10,7 @@
 #include <linux/sched.h>
 #include <linux/vmalloc.h>
 #include <linux/videodev2.h>
+#include <linux/prandom.h>
 #include <linux/v4l2-dv-timings.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-event.h>
@@ -257,8 +258,6 @@ const struct vb2_ops vivid_vid_cap_qops = {
 	.start_streaming	= vid_cap_start_streaming,
 	.stop_streaming		= vid_cap_stop_streaming,
 	.buf_request_complete	= vid_cap_buf_request_complete,
-	.wait_prepare		= vb2_ops_wait_prepare,
-	.wait_finish		= vb2_ops_wait_finish,
 };
 
 /*
@@ -301,8 +300,10 @@ void vivid_update_quality(struct vivid_dev *dev)
 	 */
 	freq_modulus = (dev->tv_freq - 676 /* (43.25-1) * 16 */) % (6 * 16);
 	if (freq_modulus > 2 * 16) {
+		struct rnd_state prng;
+		prandom_seed_state(&prng, dev->tv_freq ^ 0x55);
 		tpg_s_quality(&dev->tpg, TPG_QUAL_NOISE,
-			next_pseudo_random32(dev->tv_freq ^ 0x55) & 0x3f);
+			prandom_u32_state(&prng) & 0x3f);
 		return;
 	}
 	if (freq_modulus < 12 /*0.75 * 16*/ || freq_modulus > 20 /*1.25 * 16*/)
@@ -1459,12 +1460,19 @@ static bool valid_cvt_gtf_timings(struct v4l2_dv_timings *timings)
 	h_freq = (u32)bt->pixelclock / total_h_pixel;
 
 	if (bt->standards == 0 || (bt->standards & V4L2_DV_BT_STD_CVT)) {
+		struct v4l2_dv_timings cvt = {};
+
 		if (v4l2_detect_cvt(total_v_lines, h_freq, bt->vsync, bt->width,
-				    bt->polarities, bt->interlaced, timings))
+				    bt->polarities, bt->interlaced,
+				    &vivid_dv_timings_cap, &cvt) &&
+		    cvt.bt.width == bt->width && cvt.bt.height == bt->height) {
+			*timings = cvt;
 			return true;
+		}
 	}
 
 	if (bt->standards == 0 || (bt->standards & V4L2_DV_BT_STD_GTF)) {
+		struct v4l2_dv_timings gtf = {};
 		struct v4l2_fract aspect_ratio;
 
 		find_aspect_ratio(bt->width, bt->height,
@@ -1472,8 +1480,12 @@ static bool valid_cvt_gtf_timings(struct v4l2_dv_timings *timings)
 				  &aspect_ratio.denominator);
 		if (v4l2_detect_gtf(total_v_lines, h_freq, bt->vsync,
 				    bt->polarities, bt->interlaced,
-				    aspect_ratio, timings))
+				    aspect_ratio, &vivid_dv_timings_cap,
+				    &gtf) &&
+		    gtf.bt.width == bt->width && gtf.bt.height == bt->height) {
+			*timings = gtf;
 			return true;
+		}
 	}
 	return false;
 }

@@ -95,8 +95,8 @@ void __show_regs(struct pt_regs *regs, enum show_regs_mode mode,
 		return;
 
 	if (mode == SHOW_REGS_USER) {
-		rdmsrl(MSR_FS_BASE, fs);
-		rdmsrl(MSR_KERNEL_GS_BASE, shadowgs);
+		rdmsrq(MSR_FS_BASE, fs);
+		rdmsrq(MSR_KERNEL_GS_BASE, shadowgs);
 		printk("%sFS:  %016lx GS:  %016lx\n",
 		       log_lvl, fs, shadowgs);
 		return;
@@ -107,9 +107,9 @@ void __show_regs(struct pt_regs *regs, enum show_regs_mode mode,
 	asm("movl %%fs,%0" : "=r" (fsindex));
 	asm("movl %%gs,%0" : "=r" (gsindex));
 
-	rdmsrl(MSR_FS_BASE, fs);
-	rdmsrl(MSR_GS_BASE, gs);
-	rdmsrl(MSR_KERNEL_GS_BASE, shadowgs);
+	rdmsrq(MSR_FS_BASE, fs);
+	rdmsrq(MSR_GS_BASE, gs);
+	rdmsrq(MSR_KERNEL_GS_BASE, shadowgs);
 
 	cr0 = read_cr0();
 	cr2 = read_cr2();
@@ -195,7 +195,7 @@ static noinstr unsigned long __rdgsbase_inactive(void)
 		native_swapgs();
 	} else {
 		instrumentation_begin();
-		rdmsrl(MSR_KERNEL_GS_BASE, gsbase);
+		rdmsrq(MSR_KERNEL_GS_BASE, gsbase);
 		instrumentation_end();
 	}
 
@@ -221,7 +221,7 @@ static noinstr void __wrgsbase_inactive(unsigned long gsbase)
 		native_swapgs();
 	} else {
 		instrumentation_begin();
-		wrmsrl(MSR_KERNEL_GS_BASE, gsbase);
+		wrmsrq(MSR_KERNEL_GS_BASE, gsbase);
 		instrumentation_end();
 	}
 }
@@ -353,7 +353,7 @@ static __always_inline void load_seg_legacy(unsigned short prev_index,
 		} else {
 			if (prev_index != next_index)
 				loadseg(which, next_index);
-			wrmsrl(which == FS ? MSR_FS_BASE : MSR_KERNEL_GS_BASE,
+			wrmsrq(which == FS ? MSR_FS_BASE : MSR_KERNEL_GS_BASE,
 			       next_base);
 		}
 	} else {
@@ -463,7 +463,7 @@ unsigned long x86_gsbase_read_cpu_inactive(void)
 		gsbase = __rdgsbase_inactive();
 		local_irq_restore(flags);
 	} else {
-		rdmsrl(MSR_KERNEL_GS_BASE, gsbase);
+		rdmsrq(MSR_KERNEL_GS_BASE, gsbase);
 	}
 
 	return gsbase;
@@ -478,7 +478,7 @@ void x86_gsbase_write_cpu_inactive(unsigned long gsbase)
 		__wrgsbase_inactive(gsbase);
 		local_irq_restore(flags);
 	} else {
-		wrmsrl(MSR_KERNEL_GS_BASE, gsbase);
+		wrmsrq(MSR_KERNEL_GS_BASE, gsbase);
 	}
 }
 
@@ -614,7 +614,7 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	int cpu = smp_processor_id();
 
 	WARN_ON_ONCE(IS_ENABLED(CONFIG_DEBUG_ENTRY) &&
-		     this_cpu_read(pcpu_hot.hardirq_stack_inuse));
+		     this_cpu_read(hardirq_stack_inuse));
 
 	if (!test_tsk_thread_flag(prev_p, TIF_NEED_FPU_LOAD))
 		switch_fpu_prepare(prev_p, cpu);
@@ -668,8 +668,8 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	/*
 	 * Switch the PDA and FPU contexts.
 	 */
-	raw_cpu_write(pcpu_hot.current_task, next_p);
-	raw_cpu_write(pcpu_hot.top_of_stack, task_top_of_stack(next_p));
+	raw_cpu_write(current_task, next_p);
+	raw_cpu_write(cpu_current_top_of_stack, task_top_of_stack(next_p));
 
 	switch_fpu_finish(next_p);
 
@@ -942,7 +942,7 @@ long do_arch_prctl_64(struct task_struct *task, int option, unsigned long arg2)
 	case ARCH_MAP_VDSO_X32:
 		return prctl_map_vdso(&vdso_image_x32, arg2);
 # endif
-# if defined CONFIG_X86_32 || defined CONFIG_IA32_EMULATION
+# ifdef CONFIG_IA32_EMULATION
 	case ARCH_MAP_VDSO_32:
 		return prctl_map_vdso(&vdso_image_32, arg2);
 # endif
@@ -978,27 +978,4 @@ long do_arch_prctl_64(struct task_struct *task, int option, unsigned long arg2)
 	}
 
 	return ret;
-}
-
-SYSCALL_DEFINE2(arch_prctl, int, option, unsigned long, arg2)
-{
-	long ret;
-
-	ret = do_arch_prctl_64(current, option, arg2);
-	if (ret == -EINVAL)
-		ret = do_arch_prctl_common(option, arg2);
-
-	return ret;
-}
-
-#ifdef CONFIG_IA32_EMULATION
-COMPAT_SYSCALL_DEFINE2(arch_prctl, int, option, unsigned long, arg2)
-{
-	return do_arch_prctl_common(option, arg2);
-}
-#endif
-
-unsigned long KSTK_ESP(struct task_struct *task)
-{
-	return task_pt_regs(task)->sp;
 }

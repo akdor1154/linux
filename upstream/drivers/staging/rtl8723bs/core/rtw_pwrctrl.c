@@ -56,9 +56,8 @@ int _ips_leave(struct adapter *padapter)
 		pwrpriv->ips_leave_cnts++;
 
 		result = rtw_ips_pwr_up(padapter);
-		if (result == _SUCCESS) {
+		if (result == _SUCCESS)
 			pwrpriv->rf_pwrstate = rf_on;
-		}
 		pwrpriv->bips_processing = false;
 
 		pwrpriv->bkeepfwalive = false;
@@ -72,9 +71,6 @@ int ips_leave(struct adapter *padapter)
 {
 	struct pwrctrl_priv *pwrpriv = adapter_to_pwrctl(padapter);
 	int ret;
-
-	if (!is_primary_adapter(padapter))
-		return _SUCCESS;
 
 	mutex_lock(&pwrpriv->lock);
 	ret = _ips_leave(padapter);
@@ -455,10 +451,6 @@ void LPS_Enter(struct adapter *padapter, const char *msg)
 	if (n_assoc_iface != 1)
 		return;
 
-	/* Skip lps enter request for adapter not port0 */
-	if (get_iface_type(padapter) != IFACE_PORT0)
-		return;
-
 	if (!PS_RDY_CHECK(dvobj->padapters))
 		return;
 
@@ -556,9 +548,8 @@ void LeaveAllPowerSaveMode(struct adapter *Adapter)
 
 		LPS_Leave_check(Adapter);
 	} else {
-		if (adapter_to_pwrctl(Adapter)->rf_pwrstate == rf_off) {
+		if (adapter_to_pwrctl(Adapter)->rf_pwrstate == rf_off)
 			ips_leave(Adapter);
-		}
 	}
 }
 

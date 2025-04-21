@@ -187,32 +187,34 @@ static struct resource *apl_gpio_mem_resources[APL_GPIO_NR_RESOURCES] = {
 	[APL_GPIO_SOUTHWEST] = &apl_gpio_resources[APL_GPIO_SOUTHWEST][0],
 };
 
+#define ARRAY2D_SIZE(arr) (sizeof(arr) / sizeof((arr)[0][0]) / (sizeof((arr)[0]) / sizeof((arr)[0][0])))
+
 static const struct mfd_cell apl_gpio_devices[APL_GPIO_NR_DEVICES] = {
 	[APL_GPIO_NORTH] = {
 		.name = "apollolake-pinctrl",
 		.id = APL_GPIO_NORTH,
-		.num_resources = ARRAY_SIZE(apl_gpio_resources[APL_GPIO_NORTH]),
+		.num_resources = ARRAY2D_SIZE(apl_gpio_resources),
 		.resources = apl_gpio_resources[APL_GPIO_NORTH],
 		.ignore_resource_conflicts = true,
 	},
 	[APL_GPIO_NORTHWEST] = {
 		.name = "apollolake-pinctrl",
 		.id = APL_GPIO_NORTHWEST,
-		.num_resources = ARRAY_SIZE(apl_gpio_resources[APL_GPIO_NORTHWEST]),
+		.num_resources = ARRAY2D_SIZE(apl_gpio_resources),
 		.resources = apl_gpio_resources[APL_GPIO_NORTHWEST],
 		.ignore_resource_conflicts = true,
 	},
 	[APL_GPIO_WEST] = {
 		.name = "apollolake-pinctrl",
 		.id = APL_GPIO_WEST,
-		.num_resources = ARRAY_SIZE(apl_gpio_resources[APL_GPIO_WEST]),
+		.num_resources = ARRAY2D_SIZE(apl_gpio_resources),
 		.resources = apl_gpio_resources[APL_GPIO_WEST],
 		.ignore_resource_conflicts = true,
 	},
 	[APL_GPIO_SOUTHWEST] = {
 		.name = "apollolake-pinctrl",
 		.id = APL_GPIO_SOUTHWEST,
-		.num_resources = ARRAY_SIZE(apl_gpio_resources[APL_GPIO_SOUTHWEST]),
+		.num_resources = ARRAY2D_SIZE(apl_gpio_resources),
 		.resources = apl_gpio_resources[APL_GPIO_SOUTHWEST],
 		.ignore_resource_conflicts = true,
 	},
@@ -834,8 +836,9 @@ static const struct pci_device_id lpc_ich_ids[] = {
 	{ PCI_VDEVICE(INTEL, 0x2917), LPC_ICH9ME},
 	{ PCI_VDEVICE(INTEL, 0x2918), LPC_ICH9},
 	{ PCI_VDEVICE(INTEL, 0x2919), LPC_ICH9M},
-	{ PCI_VDEVICE(INTEL, 0x3197), LPC_GLK},
 	{ PCI_VDEVICE(INTEL, 0x2b9c), LPC_COUGARMOUNTAIN},
+	{ PCI_VDEVICE(INTEL, 0x3197), LPC_GLK},
+	{ PCI_VDEVICE(INTEL, 0x31e8), LPC_GLK},
 	{ PCI_VDEVICE(INTEL, 0x3a14), LPC_ICH10DO},
 	{ PCI_VDEVICE(INTEL, 0x3a16), LPC_ICH10R},
 	{ PCI_VDEVICE(INTEL, 0x3a18), LPC_ICH10},

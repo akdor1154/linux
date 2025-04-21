@@ -379,7 +379,7 @@ int ath12k_mhi_register(struct ath12k_pci *ab_pci)
 		mhi_ctrl->irq_flags = IRQF_SHARED | IRQF_NOBALANCING;
 
 	mhi_ctrl->iova_start = 0;
-	mhi_ctrl->iova_stop = 0xffffffff;
+	mhi_ctrl->iova_stop = ab_pci->dma_mask;
 	mhi_ctrl->sbl_size = SZ_512K;
 	mhi_ctrl->seg_len = SZ_512K;
 	mhi_ctrl->fbc_download = true;
@@ -648,4 +648,9 @@ void ath12k_mhi_suspend(struct ath12k_pci *ab_pci)
 void ath12k_mhi_resume(struct ath12k_pci *ab_pci)
 {
 	ath12k_mhi_set_state(ab_pci, ATH12K_MHI_RESUME);
+}
+
+void ath12k_mhi_coredump(struct mhi_controller *mhi_ctrl, bool in_panic)
+{
+	mhi_download_rddm_image(mhi_ctrl, in_panic);
 }

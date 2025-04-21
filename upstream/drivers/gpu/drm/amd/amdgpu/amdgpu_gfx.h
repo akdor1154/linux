@@ -57,6 +57,9 @@ enum amdgpu_gfx_pipe_priority {
 #define AMDGPU_GFX_QUEUE_PRIORITY_MINIMUM  0
 #define AMDGPU_GFX_QUEUE_PRIORITY_MAXIMUM  15
 
+/* 1 second timeout */
+#define GFX_PROFILE_IDLE_TIMEOUT	msecs_to_jiffies(1000)
+
 enum amdgpu_gfx_partition {
 	AMDGPU_SPX_PARTITION_MODE = 0,
 	AMDGPU_DPX_PARTITION_MODE = 1,
@@ -302,7 +305,8 @@ struct amdgpu_gfx_funcs {
 	void (*init_spm_golden)(struct amdgpu_device *adev);
 	void (*update_perfmon_mgcg)(struct amdgpu_device *adev, bool enable);
 	int (*get_gfx_shadow_info)(struct amdgpu_device *adev,
-				   struct amdgpu_gfx_shadow_info *shadow_info);
+				   struct amdgpu_gfx_shadow_info *shadow_info,
+				   bool skip_check);
 	enum amdgpu_gfx_partition
 			(*query_partition_mode)(struct amdgpu_device *adev);
 	int (*switch_partition_mode)(struct amdgpu_device *adev,
@@ -424,6 +428,8 @@ struct amdgpu_gfx {
 	/* reset mask */
 	uint32_t                        grbm_soft_reset;
 	uint32_t                        srbm_soft_reset;
+	uint32_t 			gfx_supported_reset;
+	uint32_t 			compute_supported_reset;
 
 	/* gfx off */
 	bool                            gfx_off_state;      /* true: enabled, false: disabled */
@@ -472,6 +478,15 @@ struct amdgpu_gfx {
 	struct mutex                    kfd_sch_mutex;
 	u64				kfd_sch_req_count[MAX_XCP];
 	bool				kfd_sch_inactive[MAX_XCP];
+	unsigned long			enforce_isolation_jiffies[MAX_XCP];
+	unsigned long			enforce_isolation_time[MAX_XCP];
+
+	atomic_t			total_submission_cnt;
+	struct delayed_work		idle_work;
+	bool				workload_profile_active;
+	struct mutex                    workload_profile_mutex;
+
+	bool				disable_kq;
 };
 
 struct amdgpu_gfx_ras_reg_entry {
@@ -491,7 +506,7 @@ struct amdgpu_gfx_ras_mem_id_entry {
 #define amdgpu_gfx_select_se_sh(adev, se, sh, instance, xcc_id) ((adev)->gfx.funcs->select_se_sh((adev), (se), (sh), (instance), (xcc_id)))
 #define amdgpu_gfx_select_me_pipe_q(adev, me, pipe, q, vmid, xcc_id) ((adev)->gfx.funcs->select_me_pipe_q((adev), (me), (pipe), (q), (vmid), (xcc_id)))
 #define amdgpu_gfx_init_spm_golden(adev) (adev)->gfx.funcs->init_spm_golden((adev))
-#define amdgpu_gfx_get_gfx_shadow_info(adev, si) ((adev)->gfx.funcs->get_gfx_shadow_info((adev), (si)))
+#define amdgpu_gfx_get_gfx_shadow_info(adev, si) ((adev)->gfx.funcs->get_gfx_shadow_info((adev), (si), false))
 
 /**
  * amdgpu_gfx_create_bitmask - create a bitmask
@@ -538,13 +553,10 @@ bool amdgpu_gfx_is_high_priority_compute_queue(struct amdgpu_device *adev,
 					       struct amdgpu_ring *ring);
 bool amdgpu_gfx_is_high_priority_graphics_queue(struct amdgpu_device *adev,
 						struct amdgpu_ring *ring);
-int amdgpu_gfx_me_queue_to_bit(struct amdgpu_device *adev, int me,
-			       int pipe, int queue);
-void amdgpu_gfx_bit_to_me_queue(struct amdgpu_device *adev, int bit,
-				int *me, int *pipe, int *queue);
 bool amdgpu_gfx_is_me_queue_enabled(struct amdgpu_device *adev, int me,
 				    int pipe, int queue);
 void amdgpu_gfx_off_ctrl(struct amdgpu_device *adev, bool enable);
+void amdgpu_gfx_off_ctrl_immediate(struct amdgpu_device *adev, bool enable);
 int amdgpu_get_gfx_off_status(struct amdgpu_device *adev, uint32_t *value);
 int amdgpu_gfx_ras_late_init(struct amdgpu_device *adev, struct ras_common_if *ras_block);
 void amdgpu_gfx_ras_fini(struct amdgpu_device *adev);
@@ -579,11 +591,16 @@ void amdgpu_gfx_cleaner_shader_sw_fini(struct amdgpu_device *adev);
 void amdgpu_gfx_cleaner_shader_init(struct amdgpu_device *adev,
 				    unsigned int cleaner_shader_size,
 				    const void *cleaner_shader_ptr);
-int amdgpu_gfx_sysfs_isolation_shader_init(struct amdgpu_device *adev);
-void amdgpu_gfx_sysfs_isolation_shader_fini(struct amdgpu_device *adev);
 void amdgpu_gfx_enforce_isolation_handler(struct work_struct *work);
 void amdgpu_gfx_enforce_isolation_ring_begin_use(struct amdgpu_ring *ring);
 void amdgpu_gfx_enforce_isolation_ring_end_use(struct amdgpu_ring *ring);
+
+void amdgpu_gfx_profile_idle_work_handler(struct work_struct *work);
+void amdgpu_gfx_profile_ring_begin_use(struct amdgpu_ring *ring);
+void amdgpu_gfx_profile_ring_end_use(struct amdgpu_ring *ring);
+
+void amdgpu_debugfs_gfx_sched_mask_init(struct amdgpu_device *adev);
+void amdgpu_debugfs_compute_sched_mask_init(struct amdgpu_device *adev);
 
 static inline const char *amdgpu_gfx_compute_mode_desc(int mode)
 {

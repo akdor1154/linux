@@ -45,7 +45,7 @@ struct mb1232_data {
 	/* Ensure correct alignment of data to push to IIO buffer */
 	struct {
 		s16 distance;
-		s64 ts __aligned(8);
+		aligned_s64 ts;
 	} scan;
 };
 
@@ -239,7 +239,7 @@ static const struct of_device_id of_mb1232_match[] = {
 	{ .compatible = "maxbotix,mb1242", },
 	{ .compatible = "maxbotix,mb7040", },
 	{ .compatible = "maxbotix,mb7137", },
-	{},
+	{ }
 };
 
 MODULE_DEVICE_TABLE(of, of_mb1232_match);
